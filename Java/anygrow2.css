@@ -1,0 +1,52 @@
+/* -----------------------------------------------------------------
+
+anygrow2.css
+화면에 표시되는 데이터를 예쁘게 표현하기 위한 스타일 파일입니다.  
+
+----------------------------------------------------------------- */
+
+		#chart_temperature, #chart_humidity, #chart_co2, #chart_illumination{
+			float:left;
+			margin-left:10px;
+			width:30px; height:0px;  
+			position:absolute;
+			bottom:20%;
+		}
+		
+		#chart_temperature{
+			background-color:#F7464A; 
+			left:46%;
+		}
+		#chart_humidity{
+			background-color:#46bfbd; 
+			left:58%
+		}
+		#chart_co2{
+			background-color:#fdb45c; 
+			left:70%
+		}
+		#chart_illumination{
+			background-color:#94846e; 
+			left:82%
+		}
+		label
+		{
+		    color:#94846e;
+		}
+		#illum_label
+		{
+		    font-size:30pt;
+		}
+
+		#sensoring_label
+		{
+		    color:#94846e;
+		    font-size:12pt;
+		}
+		#label_temperature, #label_humidity, #label_co2, #label_illumination
+		{
+		    font-size:17pt;
+		}
+		#label_harvest{
+			font-size:16pt;
+		}
