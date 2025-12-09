@@ -1,10 +1,10 @@
 # anygrow_gui.py
-# 스마트팜 GUI (작물 탭 + 단계별 프리셋 + 스케줄 + 센서 모니터링)
+# 스마트팜 GUI (작물 프리셋 + 스케줄 + 센서 모니터링 + 라인별 RGB 패널)
 
 import copy
 import tkinter as tk
-from tkinter import messagebox
-from tkinter import ttk, simpledialog
+from tkinter import messagebox, simpledialog, colorchooser
+from tkinter import ttk
 from datetime import datetime
 
 import hardware as hw
@@ -44,6 +44,10 @@ add_btn = None
 del_btn = None
 notebook = None
 
+# 라인별 RGB 상태
+NUM_LED_LINES = 7
+rgb_lines = []  # 각 요소: {"enabled": BoolVar, "mode": StringVar, "color": StringVar, "preview": Label}
+
 # crop 코드 ↔ 표시 이름/설명 매핑
 CROP_INFO = {
     "lettuce": ("상추", "잎채소, 14~16h 장일에서 잘 자람"),
@@ -52,9 +56,8 @@ CROP_INFO = {
     "strawberry": ("딸기", "장일성 품종 기준, 12~16h 빛"),
 }
 
-
 # ============================================================
-# 1. 막대 그래프 / LED / 스케줄 보조 함수
+# 1. 막대 그래프 / LED / RGB / 스케줄 보조 함수
 # ============================================================
 def create_bar(parent, row, label_text, var):
     tk.Label(parent, text=label_text, width=8, anchor="w").grid(
@@ -129,8 +132,42 @@ def send_led_command(mode):
         messagebox.showerror("LED Error", str(e))
 
 
-# ---------- 스케줄 행 / 포커스 관리 ----------
+# ---------- RGB 라인 제어 ----------
+def choose_color_for_line(idx: int):
+    """색 선택 다이얼로그 열어서 해당 라인의 색상 변경."""
+    line = rgb_lines[idx]
+    current = line["color"].get() or "#ffffff"
+    rgb, hex_color = colorchooser.askcolor(color=current)
+    if hex_color:
+        line["color"].set(hex_color)
+        line["preview"].config(bg=hex_color)
 
+
+def apply_rgb_settings():
+    """
+    GUI에서 설정한 7개 라인의 상태를 hardware.apply_rgb_state()로 전달.
+    지금은 실제 하드웨어 제어 대신 디버그 출력만 수행.
+    """
+    lines_payload = []
+    for idx, line in enumerate(rgb_lines):
+        lines_payload.append(
+            {
+                "index": idx + 1,
+                "enabled": line["enabled"].get(),
+                "mode": line["mode"].get(),
+                "color": line["color"].get() or "#000000",
+            }
+        )
+
+    try:
+        hw.apply_rgb_state(lines_payload)
+        status_var.set("[RGB] 라인별 설정 값을 보드에 전달(또는 로그)함")
+    except Exception as e:
+        status_var.set(f"[ERROR] RGB 적용 실패: {e}")
+        messagebox.showerror("RGB Error", str(e))
+
+
+# ---------- 스케줄 행 / 포커스 관리 ----------
 def set_focus_row(idx: int):
     global current_focus_row_index
     current_focus_row_index = idx
@@ -297,7 +334,6 @@ def schedule_tick():
 
 
 # ---------- 작물 탭 ----------
-
 def create_crop_tab(crop_code):
     """기존 PRESETS / CROP_INFO 에 등록된 작물 탭 하나 생성."""
     display_name, desc = CROP_INFO[crop_code]
@@ -361,6 +397,7 @@ def add_crop_tab():
 # 2. 센서 폴링 루프
 # ============================================================
 def poll_serial():
+    """하드웨어에서 한 번 폴링 후 GUI 업데이트."""
     try:
         reading, raw_string, request_sent = hw.poll_sensor_once()
     except Exception as e:
@@ -392,7 +429,7 @@ def poll_serial():
 
 
 # ============================================================
-# 3. GUI 구성
+# 3. GUI 구성 (좌: 센서/스케줄, 우: RGB)
 # ============================================================
 def build_gui():
     global root
@@ -401,15 +438,18 @@ def build_gui():
     global schedule_enabled_var, schedule_status_var
     global schedule_frame, apply_btn, add_btn, del_btn, notebook
     global manual_start_vars, manual_end_vars, manual_mode_vars, schedule_rows
+    global rgb_lines
 
     root = tk.Tk()
-    root.title("AnyGrow2 Python GUI (작물 프리셋 버전)")
-    root.geometry("900x640")
+    root.title("AnyGrow2 Python GUI (작물 프리셋 + RGB)")
+    # 1366x768 환경 고려해서 높이는 700 정도로 제한
+    root.geometry("1150x700")
 
     manual_start_vars = []
     manual_end_vars = []
     manual_mode_vars = []
     schedule_rows = []
+    rgb_lines = []
 
     status_var = tk.StringVar(value="프로그램 시작")
     raw_data_var = tk.StringVar(value="(아직 수신된 데이터 없음)")
@@ -422,7 +462,7 @@ def build_gui():
     last_update_var = tk.StringVar(value="마지막 갱신: -")
 
     # 상단 상태 바
-    top_frame = tk.Frame(root, padx=10, pady=10)
+    top_frame = tk.Frame(root, padx=10, pady=5)
     top_frame.pack(fill="x")
 
     tk.Label(top_frame, text="시리얼 상태:", font=("Malgun Gothic", 10, "bold")).pack(
@@ -436,8 +476,8 @@ def build_gui():
     tk.Label(top_frame, textvariable=request_counter_var).pack(side="left")
 
     # 수동 LED 제어
-    btn_frame = tk.LabelFrame(root, text="LED 제어 (수동)", padx=10, pady=10)
-    btn_frame.pack(fill="x", padx=10, pady=5)
+    btn_frame = tk.LabelFrame(root, text="LED 제어 (수동)", padx=10, pady=5)
+    btn_frame.pack(fill="x", padx=10, pady=(0, 5))
 
     tk.Button(btn_frame, text="OFF", width=10, command=lambda: send_led_command("Off")).pack(
         side="left", padx=5
@@ -449,9 +489,68 @@ def build_gui():
         side="left", padx=5
     )
 
+    # 메인 좌/우 분할
+    main_pane = tk.PanedWindow(root, orient=tk.HORIZONTAL, sashrelief="sunken")
+    main_pane.pack(fill="both", expand=True, padx=10, pady=5)
+
+    left_panel = tk.Frame(main_pane)
+    right_panel = tk.Frame(main_pane, padx=5, pady=5)
+    main_pane.add(left_panel, stretch="always")
+    main_pane.add(right_panel)
+
+    # ---------- 오른쪽 패널: 라인별 RGB ----------
+    rgb_frame = tk.LabelFrame(right_panel, text="라인별 LED / 색상 설정", padx=10, pady=10)
+    rgb_frame.pack(fill="both", expand=True)
+
+    tk.Label(rgb_frame, text="라인").grid(row=0, column=0, sticky="w")
+    tk.Label(rgb_frame, text="사용").grid(row=0, column=1, sticky="w")
+    tk.Label(rgb_frame, text="모드").grid(row=0, column=2, sticky="w")
+    tk.Label(rgb_frame, text="색상").grid(row=0, column=3, sticky="w")
+
+    for i in range(NUM_LED_LINES):
+        row = i + 1
+        tk.Label(rgb_frame, text=f"{i + 1}").grid(row=row, column=0, sticky="w")
+
+        enabled_var = tk.BooleanVar(value=True)
+        mode_var = tk.StringVar(value="On")
+        color_var = tk.StringVar(value="#ffffff")
+
+        chk = tk.Checkbutton(rgb_frame, variable=enabled_var)
+        chk.grid(row=row, column=1)
+
+        opt = tk.OptionMenu(rgb_frame, mode_var, "Off", "Mood", "On")
+        opt.grid(row=row, column=2, sticky="w")
+
+        preview = tk.Label(rgb_frame, width=6, relief="sunken", bg=color_var.get())
+        preview.grid(row=row, column=3, padx=(0, 4))
+
+        btn = tk.Button(
+            rgb_frame,
+            text="색 선택",
+            command=lambda idx=i: choose_color_for_line(idx),
+            width=7,
+        )
+        btn.grid(row=row, column=4, padx=(0, 4))
+
+        rgb_lines.append(
+            {
+                "enabled": enabled_var,
+                "mode": mode_var,
+                "color": color_var,
+                "preview": preview,
+            }
+        )
+
+    tk.Button(
+        rgb_frame,
+        text="라인 설정 적용",
+        command=apply_rgb_settings,
+    ).grid(row=NUM_LED_LINES + 1, column=0, columnspan=5, pady=(5, 0), sticky="w")
+
+    # ---------- 왼쪽 패널: 센서 + 스케줄 + RAW ----------
     # 센서값 + 그래프
-    env_frame = tk.LabelFrame(root, text="센서값", padx=10, pady=10)
-    env_frame.pack(fill="x", padx=10, pady=5)
+    env_frame = tk.LabelFrame(left_panel, text="센서값", padx=10, pady=10)
+    env_frame.pack(fill="x", pady=(0, 5))
 
     temp_canvas, temp_rect, temp_label = create_bar(env_frame, 0, "온도", temp_var)
     hum_canvas, hum_rect, hum_label = create_bar(env_frame, 1, "습도", hum_var)
@@ -468,10 +567,12 @@ def build_gui():
     )
 
     # 조명 스케줄
-    schedule_frame_local = tk.LabelFrame(root, text="조명 스케줄 (작물 프리셋 + 수동 설정)", padx=10, pady=10)
-    schedule_frame_local.pack(fill="x", padx=10, pady=5)
+    schedule_frame_local = tk.LabelFrame(left_panel, text="조명 스케줄 (작물 프리셋 + 수동 설정)", padx=10, pady=10)
+    schedule_frame_local.pack(fill="x", pady=(0, 5))
+    global schedule_frame
     schedule_frame = schedule_frame_local
 
+    global schedule_enabled_var, schedule_status_var
     schedule_enabled_var = tk.BooleanVar(value=True)
     schedule_status_var = tk.StringVar(value="스케줄 사용 안 함")
 
@@ -485,10 +586,11 @@ def build_gui():
         row=0, column=1, columnspan=4, sticky="w", padx=(10, 0)
     )
 
-    # ==== 작물 탭 + 추가 버튼을 한 줄에 배치 ====
+    # 작물 탭 + 추가 버튼
     crop_row = tk.Frame(schedule_frame)
     crop_row.grid(row=1, column=0, columnspan=5, sticky="we", pady=(5, 10))
 
+    global notebook
     notebook_local = ttk.Notebook(crop_row)
     notebook_local.pack(side="left", fill="x", expand=True)
     notebook = notebook_local
@@ -501,7 +603,6 @@ def build_gui():
         text="+ 작물 탭 추가",
         command=add_crop_tab,
     ).pack(side="left", padx=(5, 0))
-    # =======================================
 
     # 수동 스케줄 표
     tk.Label(
@@ -543,15 +644,15 @@ def build_gui():
     del_btn.grid(row=last_row, column=2, pady=(5, 0), sticky="w")
 
     # RAW 패킷 표시
-    sensor_frame = tk.LabelFrame(root, text="센서 데이터 (수신 패킷 문자열)", padx=10, pady=10)
-    sensor_frame.pack(fill="both", expand=True, padx=10, pady=5)
+    sensor_frame = tk.LabelFrame(left_panel, text="센서 데이터 (수신 패킷 문자열)", padx=10, pady=10)
+    sensor_frame.pack(fill="both", expand=True)
 
     sensor_text = tk.Label(
         sensor_frame,
         textvariable=raw_data_var,
         anchor="nw",
         justify="left",
-        wraplength=860,
+        wraplength=600,
     )
     sensor_text.pack(fill="both", expand=True)
 
