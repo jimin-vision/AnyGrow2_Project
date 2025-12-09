@@ -1,5 +1,5 @@
 # hardware.py
-# AnyGrow2 보드와 시리얼 통신 + 센서 데이터 파싱 + LED 제어
+# AnyGrow2 보드와 시리얼 통신 + 센서 데이터 파싱 + LED/펌프/UV 제어 + RGB 자리
 
 import serial
 import time
@@ -8,7 +8,7 @@ import threading
 # -----------------------------
 # 시리얼 설정
 # -----------------------------
-SERIAL_PORT = "COM5"     # 필요하면 여기만 바꾸면 됨
+SERIAL_PORT = "COM5"     # 필요하면 여기만 수정
 BAUD_RATE = 38400
 
 ser = None
@@ -31,6 +31,14 @@ LED_PACKETS = {
         "0201FF4CFF00FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
     ),
 }
+
+# 양액 펌프 / UV 필터 제어 패킷
+# ❗❗ 아직 실제 값 모름 → 나중에 AnyGrow 프로토콜에서 HEX 찾으면 여기 채우면 됨
+PUMP_ON_PACKET = None
+PUMP_OFF_PACKET = None
+
+UV_ON_PACKET = None
+UV_OFF_PACKET = None
 
 # -----------------------------
 # 내부 상태
@@ -247,6 +255,55 @@ def send_led_packet(mode: str):
         raise ValueError(f"Unknown LED mode: {mode}")
 
     ser_local.write(packet)
+
+
+# -----------------------------
+# 양액 펌프 / UV 필터 제어
+# -----------------------------
+def send_pump(on: bool):
+    """양액 펌프 ON/OFF (패킷 설정 전까지는 로그만 출력)"""
+    with port_lock:
+        ser_local = ser
+
+    if ser_local is None:
+        print("[PUMP] 시리얼 포트가 열려있지 않습니다.")
+        return
+
+    packet = PUMP_ON_PACKET if on else PUMP_OFF_PACKET
+    if packet is None:
+        print("[PUMP] 패킷이 아직 설정되지 않았습니다. "
+              "AnyGrow 프로토콜에서 양액펌프 ON/OFF 패킷 HEX를 찾아서 "
+              "PUMP_ON_PACKET / PUMP_OFF_PACKET 변수에 넣어주세요.")
+        return
+
+    try:
+        ser_local.write(packet)
+        print(f"[PUMP] {'ON' if on else 'OFF'} 패킷 전송")
+    except Exception as e:
+        print("[PUMP] write error:", e)
+
+
+def send_uv(on: bool):
+    """UV 필터 ON/OFF (패킷 설정 전까지는 로그만 출력)"""
+    with port_lock:
+        ser_local = ser
+
+    if ser_local is None:
+        print("[UV] 시리얼 포트가 열려있지 않습니다.")
+        return
+
+    packet = UV_ON_PACKET if on else UV_OFF_PACKET
+    if packet is None:
+        print("[UV] 패킷이 아직 설정되지 않았습니다. "
+              "AnyGrow 프로토콜에서 UV FILTER ON/OFF 패킷 HEX를 찾아서 "
+              "UV_ON_PACKET / UV_OFF_PACKET 변수에 넣어주세요.")
+        return
+
+    try:
+        ser_local.write(packet)
+        print(f"[UV] {'ON' if on else 'OFF'} 패킷 전송")
+    except Exception as e:
+        print("[UV] write error:", e)
 
 
 # -----------------------------

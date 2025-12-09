@@ -1,5 +1,5 @@
 # anygrow_gui.py
-# 스마트팜 GUI (작물 프리셋 + 스케줄 + 센서 모니터링 + 라인별 RGB 패널)
+# 스마트팜 GUI (작물 프리셋 + 스케줄 + 센서 모니터링 + 라인별 RGB + 펌프/UV 버튼)
 
 import copy
 import tkinter as tk
@@ -9,6 +9,7 @@ from datetime import datetime
 
 import hardware as hw
 import schedule_logic as sched
+
 
 # ---------- 전역 GUI 상태 ----------
 current_led_mode = None
@@ -56,8 +57,9 @@ CROP_INFO = {
     "strawberry": ("딸기", "장일성 품종 기준, 12~16h 빛"),
 }
 
+
 # ============================================================
-# 1. 막대 그래프 / LED / RGB / 스케줄 보조 함수
+# 1. 막대 그래프 / LED / 펌프 / UV / RGB 보조 함수
 # ============================================================
 def create_bar(parent, row, label_text, var):
     tk.Label(parent, text=label_text, width=8, anchor="w").grid(
@@ -132,6 +134,24 @@ def send_led_command(mode):
         messagebox.showerror("LED Error", str(e))
 
 
+def send_pump_command(on: bool):
+    try:
+        hw.send_pump(on)
+        status_var.set(f"양액 펌프: {'On' if on else 'Off'} 명령 전송")
+    except Exception as e:
+        status_var.set(f"[ERROR] 양액 펌프 제어 실패: {e}")
+        messagebox.showerror("Pump Error", str(e))
+
+
+def send_uv_command(on: bool):
+    try:
+        hw.send_uv(on)
+        status_var.set(f"UV 필터: {'On' if on else 'Off'} 명령 전송")
+    except Exception as e:
+        status_var.set(f"[ERROR] UV 필터 제어 실패: {e}")
+        messagebox.showerror("UV Error", str(e))
+
+
 # ---------- RGB 라인 제어 ----------
 def choose_color_for_line(idx: int):
     """색 선택 다이얼로그 열어서 해당 라인의 색상 변경."""
@@ -167,7 +187,9 @@ def apply_rgb_settings():
         messagebox.showerror("RGB Error", str(e))
 
 
-# ---------- 스케줄 행 / 포커스 관리 ----------
+# ============================================================
+# 2. 스케줄 행 / 포커스 / 작물 프리셋
+# ============================================================
 def set_focus_row(idx: int):
     global current_focus_row_index
     current_focus_row_index = idx
@@ -394,7 +416,7 @@ def add_crop_tab():
 
 
 # ============================================================
-# 2. 센서 폴링 루프
+# 3. 센서 폴링 루프
 # ============================================================
 def poll_serial():
     """하드웨어에서 한 번 폴링 후 GUI 업데이트."""
@@ -429,7 +451,7 @@ def poll_serial():
 
 
 # ============================================================
-# 3. GUI 구성 (좌: 센서/스케줄, 우: RGB)
+# 4. GUI 구성 (좌: 센서/스케줄, 우: RGB + 펌프/UV)
 # ============================================================
 def build_gui():
     global root
@@ -442,7 +464,6 @@ def build_gui():
 
     root = tk.Tk()
     root.title("AnyGrow2 Python GUI (작물 프리셋 + RGB)")
-    # 1366x768 환경 고려해서 높이는 700 정도로 제한
     root.geometry("1150x700")
 
     manual_start_vars = []
@@ -546,6 +567,30 @@ def build_gui():
         text="라인 설정 적용",
         command=apply_rgb_settings,
     ).grid(row=NUM_LED_LINES + 1, column=0, columnspan=5, pady=(5, 0), sticky="w")
+
+    # ---------- 오른쪽 패널: 보조 장치 제어 (양액펌프 / UV 필터) ----------
+    control_frame = tk.LabelFrame(right_panel, text="보조 장치 제어", padx=10, pady=10)
+    control_frame.pack(fill="x", pady=(10, 0))
+
+    tk.Label(control_frame, text="양액 펌프").grid(row=0, column=0, sticky="w")
+    tk.Button(
+        control_frame, text="ON", width=8,
+        command=lambda: send_pump_command(True)
+    ).grid(row=0, column=1, padx=5)
+    tk.Button(
+        control_frame, text="OFF", width=8,
+        command=lambda: send_pump_command(False)
+    ).grid(row=0, column=2, padx=5)
+
+    tk.Label(control_frame, text="UV 필터").grid(row=1, column=0, sticky="w", pady=(5, 0))
+    tk.Button(
+        control_frame, text="ON", width=8,
+        command=lambda: send_uv_command(True)
+    ).grid(row=1, column=1, padx=5, pady=(5, 0))
+    tk.Button(
+        control_frame, text="OFF", width=8,
+        command=lambda: send_uv_command(False)
+    ).grid(row=1, column=2, padx=5, pady=(5, 0))
 
     # ---------- 왼쪽 패널: 센서 + 스케줄 + RAW ----------
     # 센서값 + 그래프
@@ -669,7 +714,7 @@ def build_gui():
 
 
 # ============================================================
-# 4. 메인
+# 5. 메인
 # ============================================================
 if __name__ == "__main__":
     root = build_gui()
