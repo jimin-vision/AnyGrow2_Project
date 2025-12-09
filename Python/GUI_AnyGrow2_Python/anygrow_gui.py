@@ -1,152 +1,45 @@
 # anygrow_gui.py
-# AnyGrow2 순수 Python GUI (Tkinter + 시리얼 + 간단 그래프/알림)
+# GUI + 스케줄 + 하드웨어 모듈 결합
 
 import tkinter as tk
 from tkinter import messagebox
-import serial
-import time
 from datetime import datetime
 
-# -----------------------------
-# 1. 시리얼 설정
-# -----------------------------
-SERIAL_PORT = "COM5"   # 👉 실제 보드 포트
-BAUD_RATE = 38400
+import hardware as hw
+import schedule_logic as sched
 
-ser = None
+# ---------- 전역 GUI 상태 ----------
+current_led_mode = None
 
-
-def init_serial():
-    """시리얼 포트를 연다."""
-    global ser
-    try:
-        ser = serial.Serial(
-            port=SERIAL_PORT,
-            baudrate=BAUD_RATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=0,   # non-blocking read
-        )
-        status_var.set(f"[OK] 포트 {SERIAL_PORT} @ {BAUD_RATE} 연결됨")
-    except Exception as e:
-        ser = None
-        status_var.set(f"[ERROR] 시리얼 오픈 실패: {e}")
-        messagebox.showerror("Serial Error", f"시리얼 포트를 열 수 없습니다.\n{e}")
-
-
-# -----------------------------
-# 2. 패킷 정의 (JS/Node와 동일)
-# -----------------------------
-LED_PACKETS = {
-    "Off": bytes.fromhex(
-        "0201FF4CFF00FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
-    ),
-    "Mood": bytes.fromhex(
-        "0201FF4CFF00FF02FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
-    ),
-    "On": bytes.fromhex(
-        "0201FF4CFF00FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
-    ),
-}
-
-# 센서 데이터 요청 패킷
-SENSOR_REQUEST_PACKET = bytes.fromhex(
-    "0202FF53FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
-)
-
-# anygrow2_client.js 와 동일하게 사용
-ETX = "ff,ff"
-packet_str = ""        # 수신 패킷 누적용 문자열
-
-last_sensor_request_time = 0.0
-
-
-# -----------------------------
-# 3. LED 제어
-# -----------------------------
-def send_led_command(mode: str):
-    """LED Off/Mood/On 명령을 보낸다."""
-    if ser is None or not ser.is_open:
-        messagebox.showwarning("Serial", "시리얼 포트가 열려 있지 않습니다.")
-        return
-
-    packet = LED_PACKETS.get(mode)
-    if packet is None:
-        return
-
-    try:
-        ser.write(packet)
-        ser.write(SENSOR_REQUEST_PACKET)  # 최신 센서값 요청
-        status_var.set(f"LED 명령 전송: {mode}")
-    except Exception as e:
-        status_var.set(f"[ERROR] LED 전송 실패: {e}")
-
-
-# -----------------------------
-# 4. JS hex2dec 포팅
-# -----------------------------
-def hex2dec(arr, first, last):
-    """
-    JS:
-
-    function hex2dec(arr, first, last){
-        result='';
-        for(i=first;i<=last;i++){ result += String(eval(arr[i])-30); }
-        return eval(result);
-    }
-    """
-    result = ""
-    for i in range(first, last + 1):
-        result += str(int(arr[i]) - 30)
-    return int(result)
-
-
-def parse_sensor_packet(arr):
-    """
-    JS 코드:
-
-    if(arr_reciveData.length==30){
-      if(arr_reciveData[1]=="02"){
-        arrEnv[0][0] = hex2dec(arr_reciveData,10,12)/10; // 온도
-        arrEnv[1][0] = hex2dec(arr_reciveData,14,16)/10; // 습도
-        arrEnv[2][0] = hex2dec(arr_reciveData,18,21);    // CO2
-        arrEnv[3][0] = hex2dec(arr_reciveData,23,26);    // 조도
-      }
-    }
-    """
-    if len(arr) != 30:
-        return None
-    if arr[1] != "02":
-        return None
-
-    try:
-        temperature = hex2dec(arr, 10, 12) / 10.0
-        humidity = hex2dec(arr, 14, 16) / 10.0
-        co2 = hex2dec(arr, 18, 21)
-        illumination = hex2dec(arr, 23, 26)
-        return temperature, humidity, co2, illumination
-    except Exception:
-        return None
-
-
-# -----------------------------
-# 5. 간단 그래프(막대) 업데이트
-# -----------------------------
-# 막대를 그릴 때 사용할 최대값 (대충 일반적인 범위로 설정)
-MAX_TEMP = 40.0      # ℃
-MAX_HUM = 100.0      # %
-MAX_CO2 = 2000.0     # ppm
-MAX_ILLUM = 5000.0   # lx
-
+MAX_TEMP = 40.0
+MAX_HUM = 100.0
+MAX_CO2 = 2000.0
+MAX_ILLUM = 5000.0
 BAR_WIDTH = 220
 BAR_HEIGHT = 18
+bar_widgets = {}  # sensor_name -> (canvas, rect_id, value_label)
 
-bar_widgets = {}  # sensor_name -> (canvas, rect_id)
+# Tk 변수들 (root 생성 후 채움)
+root = None
+status_var = None
+raw_data_var = None
+request_counter_var = None
+temp_var = None
+hum_var = None
+co2_var = None
+illum_var = None
+last_update_var = None
+schedule_enabled_var = None
+schedule_status_var = None
+manual_start_vars = []
+manual_end_vars = []
+manual_mode_vars = []
 
 
+# ============================================================
+# 1. GUI 보조 함수 (막대/LED/스케줄)
+# ============================================================
 def create_bar(parent, row, label_text, var):
-    """한 줄짜리 라벨 + 값 + 막대 그래프 생성."""
     tk.Label(parent, text=label_text, width=8, anchor="w").grid(
         row=row, column=0, sticky="w"
     )
@@ -160,31 +53,28 @@ def create_bar(parent, row, label_text, var):
 
 
 def get_bar_color(sensor, value):
-    """값에 따라 색상(정상/주의/위험) 결정."""
-    # 기본 threshold는 대략적인 값. 나중에 조정 가능.
     if sensor == "temp":
         if value < 15 or value > 30:
-            return "#f44336"  # 빨강 (너무 낮거나 높음)
+            return "#f44336"
         elif 15 <= value <= 18 or 27 <= value <= 30:
-            return "#ff9800"  # 주의
+            return "#ff9800"
         else:
-            return "#4caf50"  # 정상
-    elif sensor == "hum":
+            return "#4caf50"
+    if sensor == "hum":
         if value < 30 or value > 80:
             return "#f44336"
         elif 30 <= value <= 40 or 70 <= value <= 80:
             return "#ff9800"
         else:
             return "#4caf50"
-    elif sensor == "co2":
+    if sensor == "co2":
         if value > 1500:
             return "#f44336"
         elif value > 1000:
             return "#ff9800"
         else:
             return "#4caf50"
-    elif sensor == "illum":
-        # 값이 너무 낮으면 빨강, 애매하면 주황, 충분하면 초록
+    if sensor == "illum":
         if value < 200:
             return "#f44336"
         elif value < 800:
@@ -195,183 +85,324 @@ def get_bar_color(sensor, value):
 
 
 def update_sensor_bars(t, h, c, il):
-    """막대 그래프와 라벨 색상 업데이트."""
-    # 각 센서별 최대값 대비 비율
     values = {
         "temp": (t, MAX_TEMP),
         "hum": (h, MAX_HUM),
         "co2": (c, MAX_CO2),
         "illum": (il, MAX_ILLUM),
     }
-
     for name, (value, max_val) in values.items():
         canvas, rect, label = bar_widgets[name]
         ratio = max(0.0, min(1.0, value / max_val))
         width = int(ratio * BAR_WIDTH)
         color = get_bar_color(name, value)
-
         canvas.coords(rect, 0, 0, width, BAR_HEIGHT)
         canvas.itemconfig(rect, fill=color)
         label.config(fg=color)
 
 
-# -----------------------------
-# 6. 주기적 센서 폴링 + 파싱
-# -----------------------------
-def poll_serial():
-    global last_sensor_request_time, packet_str
-
-    if ser is not None and ser.is_open:
-        now = time.time()
-
-        # 1초마다 센서 요청
-        if now - last_sensor_request_time >= 1.0:
-            try:
-                ser.write(SENSOR_REQUEST_PACKET)
-                last_sensor_request_time = now
-                req_cnt = int(request_counter_var.get() or "0") + 1
-                request_counter_var.set(str(req_cnt))
-            except Exception as e:
-                status_var.set(f"[ERROR] 센서 요청 실패: {e}")
-
-        # 수신 읽기
-        try:
-            data = ser.read(1024)
-            if data:
-                reciving_data_hex = data.hex()  # "0202ff53ff00..."
-                part = ""
-                for i, ch in enumerate(reciving_data_hex):
-                    if i != 0 and i % 2 == 0:
-                        part += ","
-                    part += ch
-
-                packet_str += part
-                raw_data_var.set(packet_str)  # 디버깅용 표시
-
-                # 패킷 끝(ETX) 확인
-                if ETX in packet_str:
-                    arr = packet_str.split(",")
-                    parsed = parse_sensor_packet(arr)
-                    if parsed is not None:
-                        t, h, c, il = parsed
-                        temp_var.set(f"{t:.1f} ℃")
-                        hum_var.set(f"{h:.1f} %")
-                        co2_var.set(f"{c} ppm")
-                        illum_var.set(f"{il} lx")
-
-                        # 그래프/색깔 업데이트
-                        update_sensor_bars(t, h, c, il)
-
-                        # 마지막 갱신 시각
-                        last_update_var.set(
-                            datetime.now().strftime("마지막 갱신: %Y-%m-%d %H:%M:%S")
-                        )
-                    packet_str = ""
-
-        except Exception as e:
-            status_var.set(f"[ERROR] 수신 실패: {e}")
-
-    root.after(200, poll_serial)
-
-
-# -----------------------------
-# 7. Tkinter GUI
-# -----------------------------
-root = tk.Tk()
-root.title("AnyGrow2 Python GUI")
-root.geometry("860x520")
-
-status_var = tk.StringVar(value="프로그램 시작")
-raw_data_var = tk.StringVar(value="(아직 수신된 데이터 없음)")
-request_counter_var = tk.StringVar(value="0")
-
-temp_var = tk.StringVar(value="-")
-hum_var = tk.StringVar(value="-")
-co2_var = tk.StringVar(value="-")
-illum_var = tk.StringVar(value="-")
-last_update_var = tk.StringVar(value="마지막 갱신: -")
-
-
-# 상단 상태 바
-top_frame = tk.Frame(root, padx=10, pady=10)
-top_frame.pack(fill="x")
-
-tk.Label(top_frame, text="시리얼 상태:", font=("Malgun Gothic", 10, "bold")).pack(side="left")
-tk.Label(top_frame, textvariable=status_var).pack(side="left", padx=5)
-
-tk.Label(top_frame, text="   센서 요청 횟수:", font=("Malgun Gothic", 10)).pack(
-    side="left", padx=(20, 0)
-)
-tk.Label(top_frame, textvariable=request_counter_var).pack(side="left")
-
-
-# LED 제어
-btn_frame = tk.LabelFrame(root, text="LED 제어", padx=10, pady=10)
-btn_frame.pack(fill="x", padx=10, pady=5)
-
-tk.Button(btn_frame, text="OFF", width=10, command=lambda: send_led_command("Off")).pack(
-    side="left", padx=5
-)
-tk.Button(btn_frame, text="Mood", width=10, command=lambda: send_led_command("Mood")).pack(
-    side="left", padx=5
-)
-tk.Button(btn_frame, text="ON", width=10, command=lambda: send_led_command("On")).pack(
-    side="left", padx=5
-)
-
-
-# 센서값 + 그래프
-env_frame = tk.LabelFrame(root, text="센서값", padx=10, pady=10)
-env_frame.pack(fill="x", padx=10, pady=5)
-
-# 숫자 + 막대 그래프 한 줄씩
-temp_canvas, temp_rect, temp_label = create_bar(env_frame, 0, "온도", temp_var)
-hum_canvas, hum_rect, hum_label = create_bar(env_frame, 1, "습도", hum_var)
-co2_canvas, co2_rect, co2_label = create_bar(env_frame, 2, "CO₂", co2_var)
-illum_canvas, illum_rect, illum_label = create_bar(env_frame, 3, "조도", illum_var)
-
-bar_widgets["temp"] = (temp_canvas, temp_rect, temp_label)
-bar_widgets["hum"] = (hum_canvas, hum_rect, hum_label)
-bar_widgets["co2"] = (co2_canvas, co2_rect, co2_label)
-bar_widgets["illum"] = (illum_canvas, illum_rect, illum_label)
-
-# 마지막 갱신 시간
-tk.Label(env_frame, textvariable=last_update_var).grid(
-    row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
-)
-
-
-# RAW 패킷 표시 (디버깅용)
-sensor_frame = tk.LabelFrame(root, text="센서 데이터 (수신 패킷 문자열)", padx=10, pady=10)
-sensor_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-sensor_text = tk.Label(
-    sensor_frame,
-    textvariable=raw_data_var,
-    anchor="nw",
-    justify="left",
-    wraplength=820,
-)
-sensor_text.pack(fill="both", expand=True)
-
-
-# 종료 처리
-def on_close():
+def send_led_command(mode):
+    """GUI에서 호출하는 래퍼: hw 모듈 호출 + 상태 텍스트 업데이트."""
+    global current_led_mode
     try:
-        if ser is not None and ser.is_open:
-            ser.close()
-    except Exception:
-        pass
-    root.destroy()
+        hw.send_led_packet(mode)
+        current_led_mode = mode
+        status_var.set(f"LED 명령 전송: {mode}")
+    except Exception as e:
+        status_var.set(f"[ERROR] LED 전송 실패: {e}")
+        messagebox.showerror("LED Error", str(e))
 
 
-root.protocol("WM_DELETE_WINDOW", on_close)
+# ---------- 스케줄 관련 ----------
+def apply_manual_schedule():
+    """입력칸 → sched 모듈 스케줄 설정 + 즉시 현재 모드 적용."""
+    entries = []
+    for i in range(len(manual_start_vars)):
+        s_txt = manual_start_vars[i].get().strip()
+        e_txt = manual_end_vars[i].get().strip()
+        mode = manual_mode_vars[i].get()
+        if s_txt == "" or e_txt == "":
+            continue
+        entries.append({"start": s_txt, "end": e_txt, "mode": mode})
+
+    try:
+        sched.set_schedule(entries)
+    except ValueError as e:
+        messagebox.showerror("시간 형식 오류", str(e))
+        return
+
+    schedule_status_var.set(f"스케줄 {len(entries)}개 구간 적용됨")
+    apply_schedule_now()
 
 
-# -----------------------------
-# 8. 메인 시작
-# -----------------------------
-if __name__ == "__main__":
-    init_serial()
+def fill_preset_and_apply(preset_name):
+    """프리셋 스케줄을 입력칸에 채우고, 스케줄 설정 + 즉시 적용."""
+    if preset_name == "seedling":
+        entries = sched.preset_seedling()
+    elif preset_name == "vegetative":
+        entries = sched.preset_vegetative()
+    else:
+        entries = sched.preset_flowering()
+
+    # 입력칸 초기화
+    for i in range(3):
+        manual_start_vars[i].set("")
+        manual_end_vars[i].set("")
+        manual_mode_vars[i].set("Off")
+
+    # 프리셋 내용 채우기
+    for i, e in enumerate(entries):
+        if i >= 3:
+            break
+        manual_start_vars[i].set(e["start"])
+        manual_end_vars[i].set(e["end"])
+        manual_mode_vars[i].set(e["mode"])
+
+    apply_manual_schedule()
+
+
+def apply_schedule_now():
+    """현재 시간 기준으로 스케줄 모드를 즉시 LED에 적용."""
+    mode = sched.get_mode_for_now()
+    if mode is None:
+        schedule_status_var.set("스케줄 없음")
+        return
+    send_led_command(mode)
+    schedule_status_var.set(
+        "현재 시간 기준 모드 자동 적용: %s (%s)"
+        % (mode, datetime.now().strftime("%H:%M"))
+    )
+
+
+def schedule_tick():
+    """30초마다 스케줄에 따라 LED 상태 자동 변경."""
+    if schedule_enabled_var.get():
+        mode = sched.get_mode_for_now()
+        if mode is None:
+            schedule_status_var.set("스케줄 없음")
+        else:
+            global current_led_mode
+            if mode != current_led_mode:
+                send_led_command(mode)
+            schedule_status_var.set(
+                "스케줄 동작: %s (%s)"
+                % (mode, datetime.now().strftime("%H:%M"))
+            )
+    else:
+        schedule_status_var.set("스케줄 사용 안 함")
+
+    root.after(30000, schedule_tick)
+
+
+# ============================================================
+# 2. 폴링 루프
+# ============================================================
+def poll_serial():
+    """하드웨어 모듈에서 한 번 폴링하고, GUI 업데이트."""
+    try:
+        reading, raw_string, request_sent = hw.poll_sensor_once()
+    except Exception as e:
+        status_var.set(f"[ERROR] 센서 폴링 실패: {e}")
+        root.after(1000, poll_serial)
+        return
+
+    # RAW 문자열 표시
+    raw_data_var.set(raw_string)
+
+    # 요청 카운트 증가
+    if request_sent:
+        try:
+            cnt = int(request_counter_var.get() or "0") + 1
+        except ValueError:
+            cnt = 1
+        request_counter_var.set(str(cnt))
+
+    # 센서값 업데이트
+    if reading is not None:
+        t, h, c, il = reading
+        temp_var.set(f"{t:.1f} ℃")
+        hum_var.set(f"{h:.1f} %")
+        co2_var.set(f"{c} ppm")
+        illum_var.set(f"{il} lx")
+        update_sensor_bars(t, h, c, il)
+        last_update_var.set(
+            datetime.now().strftime("마지막 갱신: %Y-%m-%d %H:%M:%S")
+        )
+
     root.after(200, poll_serial)
+
+
+# ============================================================
+# 3. GUI 생성
+# ============================================================
+def build_gui():
+    global root
+    global status_var, raw_data_var, request_counter_var
+    global temp_var, hum_var, co2_var, illum_var, last_update_var
+    global schedule_enabled_var, schedule_status_var
+    global manual_start_vars, manual_end_vars, manual_mode_vars
+
+    root = tk.Tk()
+    root.title("AnyGrow2 Python GUI (분할 버전)")
+    root.geometry("880x600")
+
+    status_var = tk.StringVar(value="프로그램 시작")
+    raw_data_var = tk.StringVar(value="(아직 수신된 데이터 없음)")
+    request_counter_var = tk.StringVar(value="0")
+
+    temp_var = tk.StringVar(value="-")
+    hum_var = tk.StringVar(value="-")
+    co2_var = tk.StringVar(value="-")
+    illum_var = tk.StringVar(value="-")
+    last_update_var = tk.StringVar(value="마지막 갱신: -")
+
+    # 상단 상태 바
+    top_frame = tk.Frame(root, padx=10, pady=10)
+    top_frame.pack(fill="x")
+
+    tk.Label(top_frame, text="시리얼 상태:", font=("Malgun Gothic", 10, "bold")).pack(
+        side="left"
+    )
+    tk.Label(top_frame, textvariable=status_var).pack(side="left", padx=5)
+
+    tk.Label(top_frame, text="   센서 요청 횟수:", font=("Malgun Gothic", 10)).pack(
+        side="left", padx=(20, 0)
+    )
+    tk.Label(top_frame, textvariable=request_counter_var).pack(side="left")
+
+    # 수동 LED 제어
+    btn_frame = tk.LabelFrame(root, text="LED 제어 (수동)", padx=10, pady=10)
+    btn_frame.pack(fill="x", padx=10, pady=5)
+
+    tk.Button(btn_frame, text="OFF", width=10, command=lambda: send_led_command("Off")).pack(
+        side="left", padx=5
+    )
+    tk.Button(btn_frame, text="Mood", width=10, command=lambda: send_led_command("Mood")).pack(
+        side="left", padx=5
+    )
+    tk.Button(btn_frame, text="ON", width=10, command=lambda: send_led_command("On")).pack(
+        side="left", padx=5
+    )
+
+    # 센서값 + 그래프
+    env_frame = tk.LabelFrame(root, text="센서값", padx=10, pady=10)
+    env_frame.pack(fill="x", padx=10, pady=5)
+
+    temp_canvas, temp_rect, temp_label = create_bar(env_frame, 0, "온도", temp_var)
+    hum_canvas, hum_rect, hum_label = create_bar(env_frame, 1, "습도", hum_var)
+    co2_canvas, co2_rect, co2_label = create_bar(env_frame, 2, "CO₂", co2_var)
+    illum_canvas, illum_rect, illum_label = create_bar(env_frame, 3, "조도", illum_var)
+
+    bar_widgets["temp"] = (temp_canvas, temp_rect, temp_label)
+    bar_widgets["hum"] = (hum_canvas, hum_rect, hum_label)
+    bar_widgets["co2"] = (co2_canvas, co2_rect, co2_label)
+    bar_widgets["illum"] = (illum_canvas, illum_rect, illum_label)
+
+    tk.Label(env_frame, textvariable=last_update_var).grid(
+        row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
+    )
+
+    # 조명 스케줄
+    schedule_frame = tk.LabelFrame(root, text="조명 스케줄", padx=10, pady=10)
+    schedule_frame.pack(fill="x", padx=10, pady=5)
+
+    schedule_enabled_var = tk.BooleanVar(value=False)
+    schedule_status_var = tk.StringVar(value="스케줄 사용 안 함")
+
+    tk.Checkbutton(
+        schedule_frame,
+        text="스케줄 사용",
+        variable=schedule_enabled_var,
+    ).grid(row=0, column=0, sticky="w")
+
+    tk.Label(schedule_frame, textvariable=schedule_status_var).grid(
+        row=0, column=1, columnspan=3, sticky="w", padx=(10, 0)
+    )
+
+    tk.Label(
+        schedule_frame,
+        text="(시간 형식: HH:MM, 24시간제)",
+    ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 5))
+
+    tk.Label(schedule_frame, text="구간").grid(row=2, column=0, sticky="w")
+    tk.Label(schedule_frame, text="시작").grid(row=2, column=1, sticky="w")
+    tk.Label(schedule_frame, text="종료").grid(row=2, column=2, sticky="w")
+    tk.Label(schedule_frame, text="모드").grid(row=2, column=3, sticky="w")
+
+    for i in range(3):
+        tk.Label(schedule_frame, text=f"{i+1}").grid(row=3 + i, column=0, sticky="w")
+
+        s_var = tk.StringVar(value="")
+        e_var = tk.StringVar(value="")
+        m_var = tk.StringVar(value="Off")
+
+        manual_start_vars.append(s_var)
+        manual_end_vars.append(e_var)
+        manual_mode_vars.append(m_var)
+
+        tk.Entry(schedule_frame, textvariable=s_var, width=6).grid(
+            row=3 + i, column=1, sticky="w"
+        )
+        tk.Entry(schedule_frame, textvariable=e_var, width=6).grid(
+            row=3 + i, column=2, sticky="w"
+        )
+        tk.OptionMenu(schedule_frame, m_var, "Off", "Mood", "On").grid(
+            row=3 + i, column=3, sticky="w"
+        )
+
+    tk.Button(schedule_frame, text="스케줄 적용", command=apply_manual_schedule).grid(
+        row=6, column=0, pady=(5, 0)
+    )
+    tk.Button(
+        schedule_frame, text="묘목 모드", command=lambda: fill_preset_and_apply("seedling")
+    ).grid(row=6, column=1, pady=(5, 0))
+    tk.Button(
+        schedule_frame, text="생육 모드", command=lambda: fill_preset_and_apply("vegetative")
+    ).grid(row=6, column=2, pady=(5, 0))
+    tk.Button(
+        schedule_frame, text="개화/열매 모드", command=lambda: fill_preset_and_apply("flowering")
+    ).grid(row=6, column=3, pady=(5, 0))
+
+    # RAW 패킷 표시
+    sensor_frame = tk.LabelFrame(root, text="센서 데이터 (수신 패킷 문자열)", padx=10, pady=10)
+    sensor_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+    sensor_text = tk.Label(
+        sensor_frame,
+        textvariable=raw_data_var,
+        anchor="nw",
+        justify="left",
+        wraplength=840,
+    )
+    sensor_text.pack(fill="both", expand=True)
+
+    # 종료 처리
+    def on_close():
+        try:
+            hw.close_serial()
+        except Exception:
+            pass
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
+
+    return root
+
+
+# ============================================================
+# 4. 메인
+# ============================================================
+if __name__ == "__main__":
+    root = build_gui()
+
+    # 시리얼 오픈
+    try:
+        hw.init_serial()
+        status_var.set(f"[OK] 포트 {hw.SERIAL_PORT} @ {hw.BAUD_RATE} 연결됨")
+    except Exception as e:
+        status_var.set(f"[ERROR] 시리얼 오픈 실패: {e}")
+        messagebox.showerror("Serial Error", str(e))
+
+    root.after(200, poll_serial)
+    root.after(1000, schedule_tick)
     root.mainloop()
