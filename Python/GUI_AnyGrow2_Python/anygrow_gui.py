@@ -64,7 +64,7 @@ def send_led_command(mode: str):
         return
 
     packet = LED_PACKETS.get(mode)
-    if packet is None:
+    if packet is None:asd
         return
 
     try:
