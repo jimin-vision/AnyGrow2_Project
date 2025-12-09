@@ -18,9 +18,13 @@ index.html
 		<link rel="stylesheet" href="anygrow2.css" />
   
 		<script src="jquery/jquery-2.1.0.js"></script>
-		<script src="anygrow2_client.js"></script>
-        <script src ="/socket.io/socket.io.js"></script>  
-		<script src="jquery/jquery.mobile-1.4.2.js"></script>
+
+        <!-- ✅ Socket.IO는 Flask에서 파일을 주는 게 아니라 CDN에서 직접 가져온다 -->
+        <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous"></script>
+
+        <script src="anygrow2_client.js"></script>
+        <script src="jquery/jquery.mobile-1.4.2.js"></script>
+
 		
     </head>
     
