@@ -1,92 +1,82 @@
 # schedule_logic.py
-# 조명 스케줄 로직 + 작물별 프리셋
+# AnyGrow2 조명 스케줄 계산 전용 모듈
 
 from datetime import datetime
 
-# 내부 스케줄: [{start_min, end_min, mode}, ...]
-_schedule = []
+# ------------------------------------------------------------
+# 1) 작물별 / 생육 단계별 기본 프리셋
+#    - 각 항목은 "start", "end", "mode" 로 구성
+#    - mode: "On" / "Off" / "Mood"
+# ------------------------------------------------------------
 
-# crop/stage 코드는 영어, GUI에서 한글로 표시
-# 시간은 'HH:MM' 문자열, mode는 'On' / 'Off' / 'Mood'
-# 각 프리셋은 "여러 줄"일 수 있음 (On/Off 모두 표시)
-#
-# 단계별로 확실히 다른 패턴이 나오도록 정리:
-# - 묘목: 가장 긴 조명 시간
-# - 생육: 그보다 조금 짧게
-# - 개화/열매: 더 짧게 (또는 다른 시간대)
 PRESETS = {
-    "lettuce": {  # 상추
-        # 묘목: 16h On (05~21)
-        "seedling": [
-            {"start": "05:00", "end": "21:00", "mode": "On"},
-            {"start": "21:00", "end": "05:00", "mode": "Off"},
-        ],
-        # 생육: 14h On (06~20)
-        "vegetative": [
-            {"start": "06:00", "end": "20:00", "mode": "On"},
-            {"start": "20:00", "end": "06:00", "mode": "Off"},
-        ],
-        # 개화/열매: 10h On (08~18) — 상추에선 실제로 잘 안 쓰지만, 단계 구분용
-        "flowering": [
-            {"start": "08:00", "end": "18:00", "mode": "On"},
-            {"start": "18:00", "end": "08:00", "mode": "Off"},
-        ],
-    },
-
-    "basil": {  # 바질
-        # 묘목: 16h On (06~22)
+    "lettuce": {
+        # 묘목: 16h 광 (06~22)
         "seedling": [
             {"start": "06:00", "end": "22:00", "mode": "On"},
             {"start": "22:00", "end": "06:00", "mode": "Off"},
         ],
-        # 생육: 14h On (07~21)
+        # 생육: 동일하게 16h
         "vegetative": [
-            {"start": "07:00", "end": "21:00", "mode": "On"},
-            {"start": "21:00", "end": "07:00", "mode": "Off"},
+            {"start": "06:00", "end": "22:00", "mode": "On"},
+            {"start": "22:00", "end": "06:00", "mode": "Off"},
         ],
-        # 개화/열매: 12h On (08~20)
+        # 개화/결구: 12h 광 (08~20)
         "flowering": [
             {"start": "08:00", "end": "20:00", "mode": "On"},
             {"start": "20:00", "end": "08:00", "mode": "Off"},
         ],
     },
-
-    "cherry_tomato": {  # 방울토마토
-        # 묘목: 18h On (04~22)
+    "basil": {
+        # 허브류: 16h 광
         "seedling": [
-            {"start": "04:00", "end": "22:00", "mode": "On"},
-            {"start": "22:00", "end": "04:00", "mode": "Off"},
+            {"start": "06:00", "end": "22:00", "mode": "On"},
+            {"start": "22:00", "end": "06:00", "mode": "Off"},
         ],
-        # 생육: 16h On (06~22)
         "vegetative": [
             {"start": "06:00", "end": "22:00", "mode": "On"},
             {"start": "22:00", "end": "06:00", "mode": "Off"},
         ],
-        # 개화/열매: 14h On (08~22)
         "flowering": [
-            {"start": "08:00", "end": "22:00", "mode": "On"},
-            {"start": "22:00", "end": "08:00", "mode": "Off"},
+            {"start": "08:00", "end": "20:00", "mode": "On"},
+            {"start": "20:00", "end": "08:00", "mode": "Off"},
         ],
     },
-
-    "strawberry": {  # 딸기
-        # 묘목: 16h On (05~21)
+    "cherry_tomato": {
+        # 열매채소: 14~16h 정도, 여기서는 16h 가정
         "seedling": [
-            {"start": "05:00", "end": "21:00", "mode": "On"},
-            {"start": "21:00", "end": "05:00", "mode": "Off"},
+            {"start": "06:00", "end": "22:00", "mode": "On"},
+            {"start": "22:00", "end": "06:00", "mode": "Off"},
         ],
-        # 생육: 14h On (06~20)
+        "vegetative": [
+            {"start": "06:00", "end": "22:00", "mode": "On"},
+            {"start": "22:00", "end": "06:00", "mode": "Off"},
+        ],
+        "flowering": [
+            {"start": "08:00", "end": "20:00", "mode": "On"},
+            {"start": "20:00", "end": "08:00", "mode": "Off"},
+        ],
+    },
+    "strawberry": {
+        # 딸기: 장일성 품종 기준 12~16h, 여기서는 14h 가정
+        "seedling": [
+            {"start": "06:00", "end": "20:00", "mode": "On"},
+            {"start": "20:00", "end": "06:00", "mode": "Off"},
+        ],
         "vegetative": [
             {"start": "06:00", "end": "20:00", "mode": "On"},
             {"start": "20:00", "end": "06:00", "mode": "Off"},
         ],
-        # 개화/열매: 12h On (08~20)
         "flowering": [
             {"start": "08:00", "end": "20:00", "mode": "On"},
             {"start": "20:00", "end": "08:00", "mode": "Off"},
         ],
     },
 }
+
+# 사용자가 수동으로 설정한 스케줄이 이 변수에 저장됨.
+# 내부 형식: [{"start_min": int, "end_min": int, "mode": str}, ...]
+_schedule = []
 
 
 def get_preset(crop_code: str, stage_code: str):
