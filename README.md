@@ -5,7 +5,7 @@
 - 센서(온도·습도·CO₂·조도) 데이터를 시리얼로 받아 실시간 수치/그래프로 모니터링하고 이상 구간을 색으로 표시한다.
 - 조명은 작물별 프리셋 + 수동 스케줄(자정 넘어가는 구간 포함)로 설정하며, 주기적으로 현재 시간에 맞는 모드를 계산해 자동 적용한다.
 - LED(Off/Mood/On)는 제어 가능하고, 시리얼 재연결로 통신 장애를 대응하며 펌프/UV 같은 추가 장치는 UI는 있으나 패킷은 미확정 상태다.
-
+<hr>
 
 <img width="682" height="507" alt="image" src="https://github.com/user-attachments/assets/e40c983a-b660-4ca8-becb-acbf6314cad5" />
 <img width="817" height="614" alt="image" src="https://github.com/user-attachments/assets/923c668b-a241-470c-987a-be398bd3738f" />
