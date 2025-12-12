@@ -42,7 +42,6 @@
 
 * **Language: Python, Java**
 * **Framework: PyQt, Java**
-* **Communication:** Serial (UART)
 * **Hardware: AnyGrow2 Board** 
 
 ---
