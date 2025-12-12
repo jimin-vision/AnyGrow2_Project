@@ -55,7 +55,7 @@
 | 모니터링 화면 | 스케줄 설정 화면 |
 | :---: | :---: |
 | <img width="821" height="609" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" />
-) | <img width="824" height="608" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
+ | <img width="824" height="608" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
  |
 
 ---
