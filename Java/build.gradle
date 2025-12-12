@@ -1,0 +1,54 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.example'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.fazecast:jSerialComm:2.11.0'
+    implementation 'org.java-websocket:Java-WebSocket:1.5.6'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+application {
+    // gradle run 으로 실행될 메인 클래스
+    mainClass = 'com.example.anygrow.Anygrow2Server'
+}
+
+tasks.register('runClient', JavaExec) {
+    group = 'application'
+    description = 'Run Anygrow2Client (WebSocket client)'
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.anygrow.Anygrow2Client'
+}
+
+tasks.register('runGuiClient', JavaExec) {
+    group = 'application'
+    description = 'Run Anygrow2GuiClient (Swing GUI)'
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.anygrow.Anygrow2GuiFrame'
+
+    // 필요하면 기본 WebSocket 주소 지정 가능 (생략해도 됨)
+    // args 'ws://localhost:52273'
+}
+
+
+
