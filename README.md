@@ -48,22 +48,10 @@
 ---
 
 ## 📸 실행 화면 (Screenshots)
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+
   <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" style="max-width: 100%; height: auto;">
-  <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/ddfbef24-decf-4f52-953d-aaeb8df28d9a" style="max-width: 100%; height: auto;">
+  <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/ddfbef24-decf-4f52-953d-aaeb8df28d9a" style="max-width: 100%; height: auto;"><br>
   <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" style="max-width: 100%; height: auto;">
   <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" style="max-width: 100%; height: auto;">
-</div>
 
 ---
-
-## 🚀 향후 계획 (Future Plans)
-* 센서 데이터 누적 로깅 및 CSV 내보내기 기능 추가
-* 작물별 권장 생육 환경 프리셋 데이터베이스 확충
-* 모바일 연동을 위한 네트워크 기능 확장
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License.
