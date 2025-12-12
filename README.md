@@ -49,12 +49,9 @@
 
 ## 📸 실행 화면 (Screenshots)
 
+<img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
 <img width="432" height="324" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" />
-
-
-| 모니터링 화면 | 스케줄 설정 화면 |
-| :---: | :---: |
-| <img width="221" height="159" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" /> | <img width="224" height="158" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
+<img width="421" height="309" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" />
 
 ---
 
