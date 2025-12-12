@@ -49,13 +49,13 @@
 
 ## 📸 실행 화면 (Screenshots)
 
-*(<img width="4032" height="3024" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" />
-)*
+<img width="4032" height="3024" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" />
+
 
 | 모니터링 화면 | 스케줄 설정 화면 |
 | :---: | :---: |
-| ![Monitoring]<img width="821" height="609" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" />
-) | ![Scheduling]<img width="824" height="608" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
+| <img width="821" height="609" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" />
+) | <img width="824" height="608" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
  |
 
 ---
