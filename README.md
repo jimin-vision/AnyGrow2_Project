@@ -40,22 +40,23 @@
 
 ## 💻 개발 환경 (Tech Stack)
 
-*(사용하신 언어 및 프레임워크에 맞춰 아래 내용을 수정해서 사용하세요)*
-
-* **Language:** (예: C++ / C# / Java / Python)
-* **Framework:** (예: Qt / WinForms / Swing / PyQt)
+* **Language: Python, Java**
+* **Framework: PyQt, Java**
 * **Communication:** Serial (UART)
-* **Hardware:** AnyGrow2 Board
+* **Hardware: AnyGrow2 Board** 
 
 ---
 
 ## 📸 실행 화면 (Screenshots)
 
-*(여기에 프로그램 실행 스크린샷 이미지를 넣어주세요)*
+*(<img width="4032" height="3024" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" />
+)*
 
 | 모니터링 화면 | 스케줄 설정 화면 |
 | :---: | :---: |
-| ![Monitoring](이미지_경로_입력) | ![Scheduling](이미지_경로_입력) |
+| ![Monitoring]<img width="821" height="609" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" />
+) | ![Scheduling]<img width="824" height="608" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
+ |
 
 ---
 
