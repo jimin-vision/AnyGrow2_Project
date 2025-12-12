@@ -48,11 +48,12 @@
 ---
 
 ## 📸 실행 화면 (Screenshots)
-
-<img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" />
-<img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/ddfbef24-decf-4f52-953d-aaeb8df28d9a" /><br>
-<img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" />
-<img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" />
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+  <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/9904ec33-d3cd-480e-99dc-edf146b994f0" style="max-width: 100%; height: auto;">
+  <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/ddfbef24-decf-4f52-953d-aaeb8df28d9a" style="max-width: 100%; height: auto;">
+  <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/87b5a5df-12ad-4b01-9b1f-894d58108c12" style="max-width: 100%; height: auto;">
+  <img width="424" height="308" alt="image" src="https://github.com/user-attachments/assets/2a368eb5-c67a-449b-bb49-b9e6165c702d" style="max-width: 100%; height: auto;">
+</div>
 
 ---
 
