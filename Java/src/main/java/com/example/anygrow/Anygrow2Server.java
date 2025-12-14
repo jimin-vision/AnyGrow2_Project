@@ -1,5 +1,8 @@
 package com.example.anygrow;
 
+import com.example.anygrow.SensorDataRepository;
+import com.example.anygrow.Anygrow2ClientLogic;
+
 import com.fazecast.jSerialComm.SerialPort;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
@@ -26,6 +29,10 @@ public class Anygrow2Server extends WebSocketServer {
     // ====== 시리얼 관련 ======
     private SerialPort serialPort;
     private final String serialPortName;
+
+        // 센서 파싱 + DB 저장을 위한 객체
+    private final Anygrow2ClientLogic logic = new Anygrow2ClientLogic();
+    private final SensorDataRepository sensorRepo = SensorDataRepository.getInstance();
 
     // Node.js와 동일한 센서 요청 패킷
     // 0202FF53FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03
@@ -173,47 +180,66 @@ public class Anygrow2Server extends WebSocketServer {
     }
 
     // ====== 시리얼 수신 스레드 ======
-    private void startSerialReader() {
-        Thread t = new Thread(() -> {
-            byte[] buffer = new byte[256];
+   private void startSerialReader() {
+    Thread t = new Thread(() -> {
+        byte[] buffer = new byte[256];
 
-            while (serialPort != null && serialPort.isOpen()) {
-                try {
-                    int available = serialPort.bytesAvailable();
-                    if (available <= 0) {
-                        Thread.sleep(10);
-                        continue;
-                    }
-                    if (available > buffer.length) {
-                        available = buffer.length;
-                    }
-
-                    int numRead = serialPort.readBytes(buffer, available);
-                    if (numRead > 0) {
-                        String hex = toHexWithCommas(buffer, numRead);
-                        System.out.println("[SERVER] 센서데이터 수신 (Java): " + hex);
-
-                        // 클라이언트에 전달 (Node.js와 동일한 prefix)
-                        broadcastToClients("serial_recive:" + hex);
-
-                        // 데이터가 왔으니 rcState 초기화
-                        rcState = "ok";
-                        waitCount = 0;
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    System.err.println("[SERVER] 시리얼 수신 오류: " + e.getMessage());
-                    e.printStackTrace();
+        while (serialPort != null && serialPort.isOpen()) {
+            try {
+                int available = serialPort.bytesAvailable();
+                if (available <= 0) {
+                    Thread.sleep(10);
+                    continue;
                 }
-            }
+                if (available > buffer.length) {
+                    available = buffer.length;
+                }
 
-            System.out.println("[SERVER] 시리얼 리더 스레드 종료");
-        }, "SerialReader");
-        t.setDaemon(true);
-        t.start();
-    }
+                int numRead = serialPort.readBytes(buffer, available);
+                if (numRead > 0) {
+                    String hex = toHexWithCommas(buffer, numRead);
+                    System.out.println("[SERVER] 센서데이터 수신 (Java): " + hex);
+
+                    // 1) WebSocket 클라이언트로 그대로 전달
+                    broadcastToClients("serial_recive:" + hex);
+
+                    // 2) 센서 응답이 왔으니 상태 초기화
+                    rcState = "ok";
+                    waitCount = 0;
+
+                    // 3) 패킷이 완전한 센서 데이터인 경우에만 파싱 + DB 저장
+                    //    (프로토콜 상 ff,ff 가 패킷 끝에 들어오는 것에 맞춰 사용)
+                    if (hex.contains("ff,ff")) {
+                        try {
+                            // Anygrow2ClientLogic 재활용해서 센서 값 파싱
+                            logic.onSerialReceive(hex);
+                            double temp = logic.getTemperature();
+                            double hum  = logic.getHumidity();
+                            double co2  = logic.getCo2();
+                            double ill  = logic.getIllumination();
+
+                            // DB에 한 줄 저장 (최근 24시간 유지하도록 구현한 버전이라면 내부에서 auto-clean)
+                            sensorRepo.saveReading(temp, hum, co2, ill);
+                        } catch (Exception ex) {
+                            System.err.println("[SERVER] 센서 데이터 DB 저장 중 오류: " + ex.getMessage());
+                            ex.printStackTrace();
+                        }
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("[SERVER] 시리얼 수신 오류: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+
+        System.out.println("[SERVER] 시리얼 리더 스레드 종료");
+    }, "SerialReader");
+    t.setDaemon(true);
+    t.start();
+}
 
     // ====== LED 제어 처리 ======
     private void handleSerialWrite(String mode) {
