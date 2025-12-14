@@ -6,6 +6,7 @@ import serial
 import time
 import threading
 import queue
+from datetime import datetime
 
 # -----------------------------
 # 시리얼 설정
@@ -16,6 +17,13 @@ BAUD_RATE = 38400
 ser = None
 port_lock = threading.Lock()
 command_queue = queue.Queue()
+
+# -----------------------------
+# 헬퍼: BCD 변환
+# -----------------------------
+def dec_to_bcd(n):
+    """Converts a two-digit decimal number to its BCD representation."""
+    return (n // 10) * 16 + (n % 10)
 
 # -----------------------------
 # 패킷 정의
@@ -80,7 +88,6 @@ def _parse_sensor_packet(arr):
 def init_serial():
     global ser, _running, _request_counter
     try:
-        # Port lock is acquired here for the initial open
         with port_lock:
             ser = serial.Serial(
                 port=SERIAL_PORT,
@@ -94,7 +101,6 @@ def init_serial():
         _running = True
         _request_counter = 0
         
-        # 모든 백그라운드 스레드 시작
         threading.Thread(target=_read_loop, daemon=True).start()
         threading.Thread(target=_command_worker_loop, daemon=True).start()
         threading.Thread(target=_sensor_request_loop, daemon=True).start()
@@ -102,17 +108,15 @@ def init_serial():
     except serial.SerialException as e:
         print(f"[ERROR] 시리얼 포트를 열 수 없습니다: {e}")
         ser = None
-        _running = False # 스레드가 시작되지 않도록 확실히 함
+        _running = False
         return
 
 def close_serial():
     global _running
     _running = False
-    # 작업자 스레드가 루프를 종료하도록 명령
     if command_queue:
         command_queue.put(('exit', []))
 
-    # 잠시 기다린 후 포트 닫기
     time.sleep(0.2)
     with port_lock:
         global ser
@@ -124,39 +128,29 @@ def close_serial():
             ser = None
 
 def submit_command(cmd: str, *args):
-    """UI가 하드웨어에 명령을 보낼 때 사용하는 유일한 함수."""
     if not _running or ser is None:
         print(f"[WARN] 시리얼이 연결되지 않아 '{cmd}' 명령을 무시합니다.")
         return
     command_queue.put((cmd, args))
 
 def _create_channel_led_packet(settings: list) -> bytes:
-    """
-    채널별 LED 설정을 위한 시리얼 패킷을 생성합니다.
-    settings: [{'on': bool, 'hz': int, 'brightness': int}]
-    
-    TODO: 실제 하드웨어 프로토콜에 맞게 패킷 형식을 구현해야 합니다.
-    """
     print(f"[TODO] 실제 패킷 생성 로직 필요. 설정: {settings}")
-    # 예시: return bytes.fromhex("...")
     return None
 
 # -----------------------------
 # 백그라운드 스레드 루프
 # -----------------------------
 def _read_loop():
-    """백그라운드에서 계속 시리얼 포트를 읽고 마지막 유효한 센서 값을 파싱하여 저장."""
     global _last_raw_string, _last_reading, _last_read_time
     while _running:
         data = None
         try:
-            # 모든 시리얼 접근은 port_lock으로 보호
             with port_lock:
                 if ser and ser.is_open and ser.in_waiting > 0:
                     data = ser.read(ser.in_waiting)
         except Exception as e:
             print(f"[Serial] Read error: {e}")
-            time.sleep(0.5) # 에러 발생 시 잠시 대기
+            time.sleep(0.5)
             continue
         
         if data:
@@ -169,19 +163,14 @@ def _read_loop():
                 _last_reading = reading
                 _last_read_time = time.time()
         
-        time.sleep(0.05) # CPU 사용량 줄이기
+        time.sleep(0.05)
 
 def _sensor_request_loop():
-    """1초마다 센서 데이터 요청 명령을 큐에 추가."""
     while _running:
         submit_command('sensor_req')
         time.sleep(1.0)
 
 def _command_worker_loop():
-    """
-    모든 쓰기 작업을 처리하는 유일한 스레드.
-    큐에서 명령을 하나씩 꺼내 순차적으로 실행하여 명령어 충돌을 방지.
-    """
     global _request_counter
     while _running:
         try:
@@ -221,24 +210,21 @@ def _command_worker_loop():
                     else:
                         print("[UV] 패킷이 아직 설정되지 않았습니다.")
                 
-                elif cmd == 'brightness':
-                    levels = args[0]
-                    print(f"[CMD] 7 라인 밝기 적용 요청: {levels}")
-                    # 실제 패킷 전송 로직이 확정되면 여기에 추가
-                    # packet_to_send = ...
-
                 elif cmd == 'channel_led':
                     settings = args[0]
                     print(f"[CMD] 채널별 LED 설정 적용 요청: {settings}")
                     packet_to_send = _create_channel_led_packet(settings)
-
+                
                 elif cmd == 'bms_time_sync':
-                    hour, minute = args[0]
-                    print(f"[CMD] BMS 시간 동기화 명령 전송 (MODE 2): {hour:02d}:{minute:02d}")
-                    # Protocol: 02 02 FF 'T' FF 00 FF [Hour] [Minute] FF ... 03
-                    hour_hex = f"{hour:02x}"
-                    minute_hex = f"{minute:02x}"
-                    packet_str = f"0202FF54FF00FF{hour_hex}{minute_hex}FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
+                    now = datetime.now()
+                    hour_bcd = dec_to_bcd(now.hour)
+                    minute_bcd = dec_to_bcd(now.minute)
+                    hour_hex = f"{hour_bcd:02x}"
+                    minute_hex = f"{minute_bcd:02x}"
+                    
+                    print(f"[CMD] BMS 시간 동기화 명령 전송: {now.hour:02d}:{now.minute:02d}")
+                    
+                    packet_str = f"0202FF54FF00FF{hour_hex}{minute_hex}000000FFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
                     packet_to_send = bytes.fromhex(packet_str)
 
                 elif cmd == 'sensor_req':
@@ -251,17 +237,12 @@ def _command_worker_loop():
             except Exception as e:
                 print(f"[ERROR] 명령 '{cmd}' 실행 중 오류 발생: {e}")
         
-        # 락을 해제한 후, 다음 명령 처리 전에 짧은 딜레이를 줌
         time.sleep(0.1)
 
 # -----------------------------
 # GUI에서 주기적으로 호출하는 함수
 # -----------------------------
 def poll_sensor_once():
-    """
-    GUI의 poll_serial()에서 호출.
-    백그라운드 스레드가 수집한 최신 값을 읽기만 함 (시리얼 직접 접근 X).
-    """
     global _last_poll_seen_request_counter
     if not _running:
         return None, "시리얼 포트가 닫혀있습니다.", False, None
