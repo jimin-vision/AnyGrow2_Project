@@ -8,10 +8,8 @@ from datetime import datetime
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from drivers import hardware as hw
-from core import schedule_logic as sched
 
 from ui.widgets.sensor_widget import SensorWidget
-from ui.widgets.schedule_widget import ScheduleWidget
 from ui.widgets.raw_data_widget import RawDataWidget
 from ui.widgets.control_widget import ControlWidget
 
@@ -21,6 +19,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
         self.setWindowTitle("AnyGrow2 PyQt GUI")
         self.resize(1050, 550)
+        self.setMinimumSize(1050, 550)
         self.setFont(QtGui.QFont("Malgun Gothic", 9))
 
         self._last_valid_co2 = None
@@ -30,7 +29,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         root_layout = QtWidgets.QVBoxLayout(central)
-        root_layout.setContentsMargins(10, 8, 10, 8)
+        root_layout.setContentsMargins(10, 2, 10, 2)
         root_layout.setSpacing(8)
 
         # =============================
@@ -45,10 +44,8 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         left_panel = QtWidgets.QVBoxLayout()
         left_panel.setSpacing(8)
         self.sensor_widget = SensorWidget()
-        self.schedule_widget = ScheduleWidget()
         self.raw_data_widget = RawDataWidget()
         left_panel.addWidget(self.sensor_widget, 0)
-        left_panel.addWidget(self.schedule_widget, 0)
         left_panel.addWidget(self.raw_data_widget, 0)
         left_panel.addStretch(1)
         main_row.addLayout(left_panel, 1)
@@ -65,19 +62,12 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.control_widget.pump_command.connect(self.send_pump_command)
         self.control_widget.uv_command.connect(self.send_uv_command)
 
-        self.schedule_widget.apply_schedule.connect(self.apply_manual_schedule)
-        self.schedule_widget.schedule_enabled_changed.connect(self.apply_schedule_now)
-        
         # =============================
         # Timers
         # =============================
         self.poll_timer = QtCore.QTimer(self)
         self.poll_timer.setInterval(200)
         self.poll_timer.timeout.connect(self.poll_serial)
-
-        self.schedule_timer = QtCore.QTimer(self)
-        self.schedule_timer.setInterval(30000)
-        self.schedule_timer.timeout.connect(self.schedule_tick)
 
     def _setup_top_bar(self, root_layout):
         top_bar = QtWidgets.QHBoxLayout()
@@ -117,85 +107,22 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
     # Hardware Control Slots
     # ============================================================
     def send_led_command(self, mode: str):
-        try:
-            hw.send_led_packet(mode)
-            self.set_serial_status(f"LED 명령 전송: {mode}")
-        except Exception as e:
-            self.set_serial_status(f"[ERROR] LED 전송 실패: {e}")
-            self._show_error("LED Error", str(e))
+        self.set_serial_status(f"LED 명령 예약: {mode}")
+        hw.submit_command('led', mode)
 
     def send_pump_command(self, on: bool):
-        try:
-            hw.send_pump(on)
-            self.set_serial_status(f"양액 펌프: {'On' if on else 'Off'} 명령 전송")
-        except Exception as e:
-            self.set_serial_status(f"[ERROR] 펌프 명령 실패: {e}")
-            self._show_error("Pump Error", str(e))
+        status = 'On' if on else 'Off'
+        self.set_serial_status(f"양액 펌프 명령 예약: {status}")
+        hw.submit_command('pump', on)
 
     def send_uv_command(self, on: bool):
-        try:
-            hw.send_uv(on)
-            self.set_serial_status(f"UV 필터: {'On' if on else 'Off'} 명령 전송")
-        except Exception as e:
-            self.set_serial_status(f"[ERROR] UV 명령 실패: {e}")
-            self._show_error("UV Error", str(e))
+        status = 'On' if on else 'Off'
+        self.set_serial_status(f"UV 필터 명령 예약: {status}")
+        hw.submit_command('uv', on)
 
     def apply_brightness_from_gui(self, levels: list):
-        try:
-            hw.apply_brightness_levels(levels)
-            self.set_serial_status(f"[BRIGHT] 7 라인 밝기 적용 요청: {levels}")
-        except Exception as e:
-            self.set_serial_status(f"[ERROR] 밝기 적용 실패: {e}")
-            self._show_error("Brightness Error", str(e))
-
-    # ============================================================
-    # Schedule Logic Slots
-    # ============================================================
-    def apply_manual_schedule(self, entries: list):
-        try:
-            sched.set_schedule(entries)
-        except ValueError as e:
-            self._show_error("시간 형식 오류", str(e))
-            return
-
-        self.schedule_widget.set_status_text(f"스케줄 {len(entries)}개 구간 적용됨")
-        self.schedule_widget.set_enabled(True)
-        self.apply_schedule_now()
-
-    def apply_schedule_now(self):
-        if not self.schedule_widget.is_enabled():
-            self.schedule_widget.set_status_text("스케줄 사용 안 함")
-            return
-
-        mode = sched.get_mode_for_now()
-        if mode is None:
-            self.schedule_widget.set_status_text("스케줄 없음")
-            return
-
-        try:
-            hw.send_led_packet(mode)
-            self.schedule_widget.set_status_text(
-                f"현재 시간 기준 모드 적용: {mode} ({datetime.now().strftime('%H:%M')})"
-            )
-        except Exception as e:
-            self.schedule_widget.set_status_text(f"[ERROR] 스케줄 적용 실패: {e}")
-            self._show_error("Schedule Error", str(e))
-
-    def schedule_tick(self):
-        try:
-            if self.schedule_widget.is_enabled():
-                mode = sched.get_mode_for_now()
-                if mode is not None:
-                    hw.send_led_packet(mode)
-                    self.schedule_widget.set_status_text(
-                        f"자동 스케줄 적용 중: {mode} ({datetime.now().strftime('%H:%M')})"
-                    )
-                else:
-                    self.schedule_widget.set_status_text("스케줄 없음")
-            else:
-                self.schedule_widget.set_status_text("스케줄 사용 안 함")
-        except Exception as e:
-            self.schedule_widget.set_status_text(f"[ERROR] 자동 스케줄 실패: {e}")
+        self.set_serial_status(f"밝기 조절 명령 예약: {levels}")
+        hw.submit_command('brightness', levels)
 
     # ============================================================
     # Sensor Polling / Reconnect
@@ -275,9 +202,6 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
     def start_timers(self):
         if not self.poll_timer.isActive():
             self.poll_timer.start()
-        if not self.schedule_timer.isActive():
-            self.schedule_timer.start()
-        QtCore.QTimer.singleShot(1000, self.schedule_tick)
 
     def try_init_serial(self):
         try:

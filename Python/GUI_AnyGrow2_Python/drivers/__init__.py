@@ -6,10 +6,7 @@ from .hardware import (
     init_serial,
     close_serial,
     poll_sensor_once,
-    send_led_packet,
-    apply_brightness_levels,
-    send_pump,
-    send_uv,
+    submit_command,
 )
 
 __all__ = [
@@ -18,8 +15,5 @@ __all__ = [
     "init_serial",
     "close_serial",
     "poll_sensor_once",
-    "send_led_packet",
-    "apply_brightness_levels",
-    "send_pump",
-    "send_uv",
+    "submit_command",
 ]
