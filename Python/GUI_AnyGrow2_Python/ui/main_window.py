@@ -18,8 +18,8 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         super().__init__()
 
         self.setWindowTitle("AnyGrow2 PyQt GUI")
-        self.resize(1050, 550)
-        self.setMinimumSize(1050, 550)
+        # self.resize(1050, 550)  <- REMOVED for automatic sizing
+        # self.setMinimumSize(1050, 550) <- REMOVED for automatic sizing
         self.setFont(QtGui.QFont("Malgun Gothic", 9))
 
         self._last_valid_co2 = None
@@ -50,17 +50,25 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         left_panel.addStretch(1)
         main_row.addLayout(left_panel, 1)
 
-        # Right panel
+        # Right panel (with scroll)
         self.control_widget = ControlWidget()
-        main_row.addWidget(self.control_widget, 0)
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.control_widget)
+        main_row.addWidget(scroll_area, 0)
+
+        # Calculate optimal size and increase by 50%
+        optimal_size = self.sizeHint()
+        self.resize(int(optimal_size.width() * 1.25), int(optimal_size.height() * 1.5))
 
         # =============================
         # Connect Signals
         # =============================
         self.control_widget.led_command.connect(self.send_led_command)
-        self.control_widget.brightness_command.connect(self.apply_brightness_from_gui)
+        self.control_widget.channel_led_command.connect(self.apply_channel_led_from_gui)
         self.control_widget.pump_command.connect(self.send_pump_command)
         self.control_widget.uv_command.connect(self.send_uv_command)
+        self.control_widget.timer_command.connect(self.handle_timer_command)
 
         # =============================
         # Timers
@@ -77,19 +85,19 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         lbl_serial_title.setStyleSheet("font-weight: bold;")
         self.lbl_serial_status = QtWidgets.QLabel("프로그램 시작")
 
-        lbl_req_title = QtWidgets.QLabel("   센서 요청 횟수:")
-        lbl_req_title.setStyleSheet("margin-left: 10px;")
-        self.lbl_req_count = QtWidgets.QLabel("0")
-
         top_bar.addWidget(lbl_serial_title)
         top_bar.addWidget(self.lbl_serial_status)
-        top_bar.addWidget(lbl_req_title)
-        top_bar.addWidget(self.lbl_req_count)
         top_bar.addStretch(1)
 
         self.btn_reconnect = QtWidgets.QPushButton("시리얼 재연결")
         self.btn_reconnect.clicked.connect(self.reconnect_serial)
         top_bar.addWidget(self.btn_reconnect)
+
+        lbl_req_title = QtWidgets.QLabel("센서 요청 횟수:")
+        self.lbl_req_count = QtWidgets.QLabel("0")
+
+        top_bar.addWidget(lbl_req_title)
+        top_bar.addWidget(self.lbl_req_count)
 
     # ============================================================
     # UI Helpers
@@ -120,9 +128,34 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.set_serial_status(f"UV 필터 명령 예약: {status}")
         hw.submit_command('uv', on)
 
-    def apply_brightness_from_gui(self, levels: list):
-        self.set_serial_status(f"밝기 조절 명령 예약: {levels}")
-        hw.submit_command('brightness', levels)
+    def apply_channel_led_from_gui(self, settings: list):
+        self.set_serial_status(f"채널별 LED 설정 명령 예약: {settings}")
+        hw.submit_command('channel_led', settings)
+
+    def handle_timer_command(self, settings: dict):
+        target = settings['target']
+        end_time = settings['end_time']
+        
+        current_time = QtCore.QTime.currentTime()
+        msecs_until_end = current_time.msecsTo(end_time)
+
+        if msecs_until_end < 0:
+            self.set_serial_status(f"[경고] 타이머 종료 시간이 이미 지났습니다.")
+            return
+
+        off_function = None
+        if target == "전체 LED":
+            off_function = lambda: self.send_led_command("Off")
+        elif target == "양액 펌프":
+            off_function = lambda: self.send_pump_command(False)
+        elif target == "UV 필터":
+            off_function = lambda: self.send_uv_command(False)
+
+        if off_function:
+            QtCore.QTimer.singleShot(msecs_until_end, off_function)
+            self.set_serial_status(f"[{target}] 타이머 설정 완료. {end_time.toString('HH:mm')}에 꺼집니다.")
+        else:
+            self.set_serial_status(f"[에러] 알 수 없는 타이머 대상입니다: {target}")
 
     # ============================================================
     # Sensor Polling / Reconnect

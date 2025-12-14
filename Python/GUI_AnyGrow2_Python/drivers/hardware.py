@@ -130,6 +130,17 @@ def submit_command(cmd: str, *args):
         return
     command_queue.put((cmd, args))
 
+def _create_channel_led_packet(settings: list) -> bytes:
+    """
+    채널별 LED 설정을 위한 시리얼 패킷을 생성합니다.
+    settings: [{'on': bool, 'hz': int, 'brightness': int}]
+    
+    TODO: 실제 하드웨어 프로토콜에 맞게 패킷 형식을 구현해야 합니다.
+    """
+    print(f"[TODO] 실제 패킷 생성 로직 필요. 설정: {settings}")
+    # 예시: return bytes.fromhex("...")
+    return None
+
 # -----------------------------
 # 백그라운드 스레드 루프
 # -----------------------------
@@ -215,6 +226,11 @@ def _command_worker_loop():
                     print(f"[CMD] 7 라인 밝기 적용 요청: {levels}")
                     # 실제 패킷 전송 로직이 확정되면 여기에 추가
                     # packet_to_send = ...
+
+                elif cmd == 'channel_led':
+                    settings = args[0]
+                    print(f"[CMD] 채널별 LED 설정 적용 요청: {settings}")
+                    packet_to_send = _create_channel_led_packet(settings)
 
                 elif cmd == 'sensor_req':
                     packet_to_send = SENSOR_REQUEST_PACKET
