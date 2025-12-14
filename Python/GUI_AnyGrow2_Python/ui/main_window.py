@@ -12,6 +12,7 @@ from drivers import hardware as hw
 from ui.widgets.sensor_widget import SensorWidget
 from ui.widgets.raw_data_widget import RawDataWidget
 from ui.widgets.control_widget import ControlWidget
+from ui.widgets.interval_widget import IntervalWidget
 
 class AnyGrowMainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -22,6 +23,8 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
         self._last_valid_co2 = None
         self._last_console_print_time = 0.0
+        self.interval_widgets = []
+        self.active_timers = []
 
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -46,9 +49,9 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self._setup_timer_controls() # Create timer controls
         
         left_panel.addWidget(self.sensor_widget, 0)
-        left_panel.addWidget(self.raw_data_widget, 0)
-        left_panel.addWidget(self.gb_timer) # Add timer groupbox to left panel
-        left_panel.addStretch(1)
+        left_panel.addWidget(self.raw_data_widget, 1) # 1/3 of the stretch space
+        left_panel.addWidget(self.gb_timer) 
+        left_panel.addStretch(2) # 2/3 of the stretch space
         main_row.addLayout(left_panel, 1)
 
         # Right panel (with scroll)
@@ -58,9 +61,9 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         scroll_area.setWidget(self.control_widget)
         main_row.addWidget(scroll_area, 0)
 
-        # Calculate optimal size and increase
+        # Calculate optimal size and set fixed size
         optimal_size = self.sizeHint()
-        self.resize(int(optimal_size.width() * 1.05), int(optimal_size.height() * 1.2)) # Width multiplier changed to 1.05
+        self.setFixedSize(int(optimal_size.width() * 0.95), int(optimal_size.height() * 1.2))
 
         # =============================
         # Connect Signals
@@ -95,6 +98,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         lbl_serial_title = QtWidgets.QLabel("시리얼 상태:")
         lbl_serial_title.setStyleSheet("font-weight: bold;")
         self.lbl_serial_status = QtWidgets.QLabel("프로그램 시작")
+        self.lbl_serial_status.setWordWrap(True)
 
         self.lbl_current_time = QtWidgets.QLabel("HH:MM:SS")
         font = self.lbl_current_time.font()
@@ -106,8 +110,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         top_bar.addWidget(self.lbl_req_count)
         top_bar.addSpacing(20)
         top_bar.addWidget(lbl_serial_title)
-        top_bar.addWidget(self.lbl_serial_status)
-        top_bar.addStretch(1)
+        top_bar.addWidget(self.lbl_serial_status, 1) # Add with stretch
         top_bar.addWidget(self.lbl_current_time)
 
     def _update_clock(self):
@@ -115,51 +118,57 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.lbl_current_time.setText(now_str)
         
     def _setup_timer_controls(self):
-        self.gb_timer = QtWidgets.QGroupBox("타이머 제어")
-        timer_grid = QtWidgets.QGridLayout(self.gb_timer)
+        self.gb_timer = QtWidgets.QGroupBox("구간별 동작 설정")
         
-        # Start Time
-        timer_grid.addWidget(QtWidgets.QLabel("시작 시간:"), 0, 0)
-        self.spin_start_hour = QtWidgets.QSpinBox()
-        self.spin_start_hour.setRange(0, 23)
-        self.spin_start_hour.setSuffix("시")
-        self.spin_start_hour.setValue(QtCore.QTime.currentTime().hour()) # Default to current hour
-        timer_grid.addWidget(self.spin_start_hour, 0, 1)
-        self.spin_start_min = QtWidgets.QSpinBox()
-        self.spin_start_min.setRange(0, 59)
-        self.spin_start_min.setSuffix("분")
-        self.spin_start_min.setValue(QtCore.QTime.currentTime().minute()) # Default to current minute
-        timer_grid.addWidget(self.spin_start_min, 0, 2)
-        btn_set_start_now = QtWidgets.QPushButton("현재시간")
-        btn_set_start_now.clicked.connect(self._set_start_time_now)
-        timer_grid.addWidget(btn_set_start_now, 0, 3)
+        root_v_layout = QtWidgets.QVBoxLayout(self.gb_timer)
 
-        # End time
-        timer_grid.addWidget(QtWidgets.QLabel("종료 시간:"), 1, 0)
-        self.spin_end_hour = QtWidgets.QSpinBox()
-        self.spin_end_hour.setRange(0, 23)
-        self.spin_end_hour.setSuffix("시")
-        self.spin_end_hour.setValue(QtCore.QTime.currentTime().hour()) # Default to current hour
-        timer_grid.addWidget(self.spin_end_hour, 1, 1)
-        self.spin_end_min = QtWidgets.QSpinBox()
-        self.spin_end_min.setRange(0, 59)
-        self.spin_end_min.setSuffix("분")
-        self.spin_end_min.setValue(QtCore.QTime.currentTime().minute()) # Default to current minute
-        timer_grid.addWidget(self.spin_end_min, 1, 2)
-        btn_set_end_now = QtWidgets.QPushButton("현재시간")
-        btn_set_end_now.clicked.connect(self._set_end_time_now)
-        timer_grid.addWidget(btn_set_end_now, 1, 3)
+        # Scroll Area for intervals
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_widget = QtWidgets.QWidget()
+        self.intervals_layout = QtWidgets.QVBoxLayout(scroll_widget)
+        self.intervals_layout.setSpacing(4)
+        self.intervals_layout.addStretch(1)
+        scroll_area.setWidget(scroll_widget)
         
-        # Target device
-        timer_grid.addWidget(QtWidgets.QLabel("제어 대상:"), 2, 0)
-        self.cmb_timer_target = QtWidgets.QComboBox()
-        self.cmb_timer_target.addItems(["전체 LED", "양액 펌프", "UV 필터"])
-        timer_grid.addWidget(self.cmb_timer_target, 2, 1, 1, 3) # Span 3 columns now
+        # Set a reasonable minimum height for the scroll area
+        scroll_area.setMinimumHeight(150)
 
-        # Start button
-        btn_start_timer = QtWidgets.QPushButton("타이머 시작")
-        btn_start_timer.clicked.connect(self.handle_timer_command)
-        timer_grid.addWidget(btn_start_timer, 3, 0, 1, 4) # Span 4 columns now
+        # Buttons at the bottom
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_add = QtWidgets.QPushButton("✚ 구간 추가")
+        btn_add.clicked.connect(self._add_interval_row)
+        btn_apply = QtWidgets.QPushButton("💾 모든 예약 적용")
+        btn_apply.clicked.connect(self.apply_all_schedules)
+        btn_layout.addWidget(btn_add)
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(btn_apply)
+
+        root_v_layout.addWidget(scroll_area)
+        root_v_layout.addLayout(btn_layout)
+        
+        # Add one interval by default
+        self._add_interval_row()
+
+    def _add_interval_row(self):
+        new_interval = IntervalWidget()
+        new_interval.remove_requested.connect(lambda: self._remove_interval_row(new_interval))
+        
+        # Insert before the stretch
+        self.intervals_layout.insertWidget(self.intervals_layout.count() - 1, new_interval)
+        self.interval_widgets.append(new_interval)
+        self._update_interval_numbers()
+
+    def _remove_interval_row(self, widget_to_remove):
+        if widget_to_remove in self.interval_widgets:
+            self.interval_widgets.remove(widget_to_remove)
+            self.intervals_layout.removeWidget(widget_to_remove)
+            widget_to_remove.deleteLater()
+            self._update_interval_numbers()
+
+    def _update_interval_numbers(self):
+        for i, widget in enumerate(self.interval_widgets):
+            widget.set_number(i + 1)
 
     # ============================================================
     # UI Helpers
@@ -169,84 +178,108 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
     def set_serial_status(self, text: str):
         self.lbl_serial_status.setText(text)
+        self.lbl_serial_status.setToolTip(text)
 
     def set_request_count(self, n: int):
         self.lbl_req_count.setText(str(n))
-        
-    def _set_start_time_now(self):
-        current_time = QtCore.QTime.currentTime()
-        self.spin_start_hour.setValue(current_time.hour())
-        self.spin_start_min.setValue(current_time.minute())
-
-    def _set_end_time_now(self):
-        current_time = QtCore.QTime.currentTime()
-        self.spin_end_hour.setValue(current_time.hour())
-        self.spin_end_min.setValue(current_time.minute())
 
     # ============================================================
     # Hardware Control Slots
     # ============================================================
     def send_led_command(self, mode: str):
-        self.set_serial_status(f"LED 명령 예약: {mode}")
+        self.set_serial_status(f"LED 명령 전송: {mode}")
         hw.submit_command('led', mode)
 
     def send_pump_command(self, on: bool):
         status = 'On' if on else 'Off'
-        self.set_serial_status(f"양액 펌프 명령 예약: {status}")
+        self.set_serial_status(f"양액 펌프 명령 전송: {status}")
         hw.submit_command('pump', on)
 
     def send_uv_command(self, on: bool):
         status = 'On' if on else 'Off'
-        self.set_serial_status(f"UV 필터 명령 예약: {status}")
+        self.set_serial_status(f"UV 필터 명령 전송: {status}")
         hw.submit_command('uv', on)
 
     def apply_channel_led_from_gui(self, settings: list):
-        self.set_serial_status(f"채널별 LED 설정 명령 예약: {settings}")
+        self.set_serial_status(f"채널별 LED 설정 명령 전송: {settings}")
         hw.submit_command('channel_led', settings)
 
     def sync_bms_time(self):
         now = datetime.now()
         hour = now.hour
         minute = now.minute
-        self.set_serial_status(f"BMS 시간 동기화 명령 예약: {hour:02d}:{minute:02d}")
+        self.set_serial_status(f"BMS 시간 동기화 명령 전송: {hour:02d}:{minute:02d}")
         hw.submit_command('bms_time_sync', (hour, minute))
 
-    def handle_timer_command(self):
-        target = self.cmb_timer_target.currentText()
+    def apply_all_schedules(self):
+        # 1. Cancel all previously scheduled timers
+        for timer in self.active_timers:
+            timer.stop()
+        self.active_timers.clear()
         
-        start_hour = self.spin_start_hour.value()
-        start_min = self.spin_start_min.value()
-        start_time = QtCore.QTime(start_hour, start_min)
-
-        end_hour = self.spin_end_hour.value()
-        end_min = self.spin_end_min.value()
-        end_time = QtCore.QTime(end_hour, end_min)
+        self.set_serial_status("기존 예약을 모두 취소하고 새 예약을 적용합니다...")
         
         current_time = QtCore.QTime.currentTime()
-        # For a simple 'turn off at end_time' timer, we use msecsTo(end_time)
-        msecs_until_end = current_time.msecsTo(end_time)
+        schedule_count = 0
 
-        # If start_time is in the future, we would need to schedule a separate 'turn on' event.
-        # For now, focusing on the 'turn off' at end_time.
-        # If the user wants an 'on duration' from start to end, that would be more complex.
+        # 2. Iterate through widgets and create new timers
+        for i, widget in enumerate(self.interval_widgets):
+            settings = widget.get_values()
+            start_time = settings["start_time"]
+            end_time = settings["end_time"]
+            action = settings["action"]
+            target = settings["target"]
+
+            is_on_at_start = (action == "켜기 (ON)")
+
+            # --- Schedule start action ---
+            msecs_until_start = current_time.msecsTo(start_time)
+            if msecs_until_start < 0:
+                msecs_until_start += 24 * 60 * 60 * 1000 # Next day
+            
+            start_timer = QtCore.QTimer(self)
+            start_timer.setSingleShot(True)
+            
+            start_func = self._get_command_func(target, is_on_at_start)
+            if start_func:
+                start_timer.timeout.connect(start_func)
+                start_timer.start(msecs_until_start)
+                self.active_timers.append(start_timer)
+                schedule_count += 1
+
+            # --- Schedule end action (opposite of start) ---
+            msecs_until_end = current_time.msecsTo(end_time)
+            if msecs_until_end < 0:
+                msecs_until_end += 24 * 60 * 60 * 1000 # Next day
+
+            # Handle case where end time is before start time (overnight interval)
+            if start_time > end_time:
+                 # This logic assumes if start > end, it's an overnight task
+                 # and the end is on the "next" day relative to the start.
+                 pass # msecs_until_end is already correct for the next day if past
+
+            end_timer = QtCore.QTimer(self)
+            end_timer.setSingleShot(True)
+
+            end_func = self._get_command_func(target, not is_on_at_start)
+            if end_func:
+                end_timer.timeout.connect(end_func)
+                end_timer.start(msecs_until_end)
+                self.active_timers.append(end_timer)
+                schedule_count += 1
         
-        if msecs_until_end < 0:
-            self.set_serial_status(f"[경고] 타이머 종료 시간이 이미 지났습니다.")
-            return
+        self.set_serial_status(f"총 {schedule_count}개의 예약(켜기/끄기)을 설정했습니다.")
 
-        off_function = None
+    def _get_command_func(self, target: str, is_on: bool):
+        """Helper to get the correct hardware command function."""
         if target == "전체 LED":
-            off_function = lambda: self.send_led_command("Off")
+            mode = "Auto" if is_on else "Off"
+            return lambda: self.send_led_command(mode)
         elif target == "양액 펌프":
-            off_function = lambda: self.send_pump_command(False)
+            return lambda: self.send_pump_command(is_on)
         elif target == "UV 필터":
-            off_function = lambda: self.send_uv_command(False)
-
-        if off_function:
-            QtCore.QTimer.singleShot(msecs_until_end, off_function)
-            self.set_serial_status(f"[{target}] 타이머 설정 완료. {end_time.toString('HH:mm')}에 꺼집니다.")
-        else:
-            self.set_serial_status(f"[에러] 알 수 없는 타이머 대상입니다: {target}")
+            return lambda: self.send_uv_command(is_on)
+        return None
 
     # ============================================================
     # Sensor Polling / Reconnect

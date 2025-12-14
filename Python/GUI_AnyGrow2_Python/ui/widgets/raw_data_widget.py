@@ -12,7 +12,7 @@ class RawDataWidget(QtWidgets.QGroupBox):
         self.txt_raw = QtWidgets.QPlainTextEdit()
         self.txt_raw.setReadOnly(True)
         self.txt_raw.setPlainText("(아직 수신된 데이터 없음)")
-        self.txt_raw.setFixedHeight(85)
+        self.txt_raw.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth) # Enable word wrap
         raw_v.addWidget(self.txt_raw)
 
     def set_text(self, text: str):

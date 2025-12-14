@@ -14,9 +14,10 @@ class SensorWidget(QtWidgets.QGroupBox):
         env_grid = QtWidgets.QGridLayout(self)
         env_grid.setHorizontalSpacing(12)
         env_grid.setVerticalSpacing(6)
-        env_grid.setColumnStretch(2, 1)
+        env_grid.setColumnStretch(3, 1) # Column 3 (ProgressBar) is now stretchable
 
-        self._bars = {}  # key -> (value_label, progressbar, max_value)
+        self._bars = {}
+        self.previous_values = {} # Store previous values for trend
 
         self._add_sensor_row(0, "온도", "temp", MAX_TEMP)
         self._add_sensor_row(1, "습도", "hum", MAX_HUM)
@@ -27,8 +28,8 @@ class SensorWidget(QtWidgets.QGroupBox):
         self.lbl_sensor_status = QtWidgets.QLabel("센서 데이터 수신 기록 없음")
         self.lbl_sensor_status.setStyleSheet("color: blue;")
 
-        env_grid.addWidget(self.lbl_last_update, 4, 0, 1, 3)
-        env_grid.addWidget(self.lbl_sensor_status, 5, 0, 1, 3)
+        env_grid.addWidget(self.lbl_last_update, 4, 0, 1, 4) # Span 4 columns
+        env_grid.addWidget(self.lbl_sensor_status, 5, 0, 1, 4) # Span 4 columns
 
     def _add_sensor_row(self, r: int, title: str, key: str, max_v: float):
         name = QtWidgets.QLabel(title)
@@ -37,13 +38,20 @@ class SensorWidget(QtWidgets.QGroupBox):
         value_lbl = QtWidgets.QLabel("-")
         value_lbl.setMinimumWidth(95)
         value_lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        
+        trend_lbl = QtWidgets.QLabel("─")
+        trend_font = trend_lbl.font()
+        trend_font.setBold(True)
+        trend_lbl.setFont(trend_font)
+        trend_lbl.setMinimumWidth(20)
+        trend_lbl.setAlignment(QtCore.Qt.AlignCenter)
 
         bar = QtWidgets.QProgressBar()
         bar.setRange(0, 1000)
         bar.setValue(0)
         bar.setTextVisible(False)
         bar.setFixedHeight(18)
-        bar.setMinimumWidth(260)
+        bar.setMinimumWidth(240)
         bar.setStyleSheet(
             "QProgressBar { border: 1px solid #bdbdbd; border-radius: 2px; }"
             "QProgressBar::chunk { background: #4caf50; }"
@@ -51,8 +59,9 @@ class SensorWidget(QtWidgets.QGroupBox):
 
         self.layout().addWidget(name, r, 0)
         self.layout().addWidget(value_lbl, r, 1)
-        self.layout().addWidget(bar, r, 2)
-        self._bars[key] = (value_lbl, bar, max_v)
+        self.layout().addWidget(trend_lbl, r, 2) # Add trend label at column 2
+        self.layout().addWidget(bar, r, 3) # Progress bar moved to column 3
+        self._bars[key] = (value_lbl, trend_lbl, bar, max_v)
 
     def update_sensor_bars(self, t: float, h: float, c: int, il: int):
         data = {
@@ -62,7 +71,7 @@ class SensorWidget(QtWidgets.QGroupBox):
             "illum": (float(il), MAX_ILLUM, f"{il} lx"),
         }
         for key, (val, max_v, txt) in data.items():
-            value_lbl, bar, _ = self._bars[key]
+            value_lbl, trend_lbl, bar, _ = self._bars[key]
 
             ratio = max(0.0, min(1.0, float(val) / float(max_v)))
             bar.setValue(int(ratio * 1000))
@@ -74,6 +83,21 @@ class SensorWidget(QtWidgets.QGroupBox):
                 "QProgressBar { border: 1px solid #bdbdbd; border-radius: 2px; }"
                 f"QProgressBar::chunk {{ background: {color}; }}"
             )
+            
+            # Update trend indicator
+            prev_val = self.previous_values.get(key)
+            if prev_val is not None:
+                if val > prev_val:
+                    trend_lbl.setText("▲")
+                    trend_lbl.setStyleSheet("color: green;")
+                elif val < prev_val:
+                    trend_lbl.setText("▼")
+                    trend_lbl.setStyleSheet("color: red;")
+                # else: # val == prev_val, do nothing to keep previous arrow
+                #    trend_lbl.setText("─")
+                #    trend_lbl.setStyleSheet("color: gray;")
+            
+            self.previous_values[key] = val
     
     def set_last_update_text(self, text: str):
         self.lbl_last_update.setText(text)
@@ -84,9 +108,12 @@ class SensorWidget(QtWidgets.QGroupBox):
     def reset(self):
         self.set_last_update_text("마지막 갱신: -")
         self.set_sensor_status_text("센서 데이터 수신 기록 없음")
-        for key, (value_lbl, bar, max_v) in self._bars.items():
+        self.previous_values = {} # Clear previous values on reset
+        for key, (value_lbl, trend_lbl, bar, max_v) in self._bars.items():
             value_lbl.setText("-")
             value_lbl.setStyleSheet("")
+            trend_lbl.setText("─")
+            trend_lbl.setStyleSheet("color: gray;")
             bar.setValue(0)
             bar.setStyleSheet(
                 "QProgressBar { border: 1px solid #bdbdbd; border-radius: 2px; }"
