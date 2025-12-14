@@ -232,6 +232,15 @@ def _command_worker_loop():
                     print(f"[CMD] 채널별 LED 설정 적용 요청: {settings}")
                     packet_to_send = _create_channel_led_packet(settings)
 
+                elif cmd == 'bms_time_sync':
+                    hour, minute = args[0]
+                    print(f"[CMD] BMS 시간 동기화 명령 전송 (MODE 2): {hour:02d}:{minute:02d}")
+                    # Protocol: 02 02 FF 'T' FF 00 FF [Hour] [Minute] FF ... 03
+                    hour_hex = f"{hour:02x}"
+                    minute_hex = f"{minute:02x}"
+                    packet_str = f"0202FF54FF00FF{hour_hex}{minute_hex}FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
+                    packet_to_send = bytes.fromhex(packet_str)
+
                 elif cmd == 'sensor_req':
                     packet_to_send = SENSOR_REQUEST_PACKET
                     _request_counter += 1

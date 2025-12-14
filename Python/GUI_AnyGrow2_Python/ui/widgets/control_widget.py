@@ -8,25 +8,23 @@ class ControlWidget(QtWidgets.QWidget):
     channel_led_command = QtCore.pyqtSignal(list)
     pump_command = QtCore.pyqtSignal(bool)
     uv_command = QtCore.pyqtSignal(bool)
-    timer_command = QtCore.pyqtSignal(dict)
+    bms_time_sync_command = QtCore.pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
+        
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(8)
 
         self._setup_led_controls()
         self._setup_brightness_controls()
         self._setup_aux_controls()
-        self._setup_timer_controls()
 
         layout.addWidget(self.gb_led)
         layout.addWidget(self.gb_bright)
         layout.addWidget(self.gb_aux)
-        layout.addWidget(self.gb_timer)
         layout.addStretch(1)
-
+        
     def _setup_led_controls(self):
         self.gb_led = QtWidgets.QGroupBox("LED 제어 (전체)")
         led_grid = QtWidgets.QGridLayout(self.gb_led)
@@ -127,6 +125,11 @@ class ControlWidget(QtWidgets.QWidget):
         btn_uv_off.clicked.connect(lambda: self.uv_command.emit(False))
         aux_grid.addWidget(btn_uv_on, 1, 1)
         aux_grid.addWidget(btn_uv_off, 1, 2)
+        
+        # BMS Time Sync button
+        btn_bms_sync = QtWidgets.QPushButton("BMS 시간 현재시간으로 설정")
+        btn_bms_sync.clicked.connect(self.bms_time_sync_command.emit)
+        aux_grid.addWidget(btn_bms_sync, 2, 0, 1, 3) # Span across 3 columns
         
     def _setup_timer_controls(self):
         self.gb_timer = QtWidgets.QGroupBox("타이머 제어")

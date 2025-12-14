@@ -18,8 +18,6 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         super().__init__()
 
         self.setWindowTitle("AnyGrow2 PyQt GUI")
-        # self.resize(1050, 550)  <- REMOVED for automatic sizing
-        # self.setMinimumSize(1050, 550) <- REMOVED for automatic sizing
         self.setFont(QtGui.QFont("Malgun Gothic", 9))
 
         self._last_valid_co2 = None
@@ -45,8 +43,11 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         left_panel.setSpacing(8)
         self.sensor_widget = SensorWidget()
         self.raw_data_widget = RawDataWidget()
+        self._setup_timer_controls() # Create timer controls
+        
         left_panel.addWidget(self.sensor_widget, 0)
         left_panel.addWidget(self.raw_data_widget, 0)
+        left_panel.addWidget(self.gb_timer) # Add timer groupbox to left panel
         left_panel.addStretch(1)
         main_row.addLayout(left_panel, 1)
 
@@ -57,9 +58,9 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         scroll_area.setWidget(self.control_widget)
         main_row.addWidget(scroll_area, 0)
 
-        # Calculate optimal size and increase by 50%
+        # Calculate optimal size and increase
         optimal_size = self.sizeHint()
-        self.resize(int(optimal_size.width() * 1.25), int(optimal_size.height() * 1.5))
+        self.resize(int(optimal_size.width() * 1.05), int(optimal_size.height() * 1.2)) # Width multiplier changed to 1.05
 
         # =============================
         # Connect Signals
@@ -68,7 +69,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.control_widget.channel_led_command.connect(self.apply_channel_led_from_gui)
         self.control_widget.pump_command.connect(self.send_pump_command)
         self.control_widget.uv_command.connect(self.send_uv_command)
-        self.control_widget.timer_command.connect(self.handle_timer_command)
+        self.control_widget.bms_time_sync_command.connect(self.sync_bms_time)
 
         # =============================
         # Timers
@@ -98,6 +99,53 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
         top_bar.addWidget(lbl_req_title)
         top_bar.addWidget(self.lbl_req_count)
+        
+    def _setup_timer_controls(self):
+        self.gb_timer = QtWidgets.QGroupBox("타이머 제어")
+        timer_grid = QtWidgets.QGridLayout(self.gb_timer)
+        
+        # Start Time
+        timer_grid.addWidget(QtWidgets.QLabel("시작 시간:"), 0, 0)
+        self.spin_start_hour = QtWidgets.QSpinBox()
+        self.spin_start_hour.setRange(0, 23)
+        self.spin_start_hour.setSuffix("시")
+        self.spin_start_hour.setValue(QtCore.QTime.currentTime().hour()) # Default to current hour
+        timer_grid.addWidget(self.spin_start_hour, 0, 1)
+        self.spin_start_min = QtWidgets.QSpinBox()
+        self.spin_start_min.setRange(0, 59)
+        self.spin_start_min.setSuffix("분")
+        self.spin_start_min.setValue(QtCore.QTime.currentTime().minute()) # Default to current minute
+        timer_grid.addWidget(self.spin_start_min, 0, 2)
+        btn_set_start_now = QtWidgets.QPushButton("현재시간")
+        btn_set_start_now.clicked.connect(self._set_start_time_now)
+        timer_grid.addWidget(btn_set_start_now, 0, 3)
+
+        # End time
+        timer_grid.addWidget(QtWidgets.QLabel("종료 시간:"), 1, 0)
+        self.spin_end_hour = QtWidgets.QSpinBox()
+        self.spin_end_hour.setRange(0, 23)
+        self.spin_end_hour.setSuffix("시")
+        self.spin_end_hour.setValue(QtCore.QTime.currentTime().hour()) # Default to current hour
+        timer_grid.addWidget(self.spin_end_hour, 1, 1)
+        self.spin_end_min = QtWidgets.QSpinBox()
+        self.spin_end_min.setRange(0, 59)
+        self.spin_end_min.setSuffix("분")
+        self.spin_end_min.setValue(QtCore.QTime.currentTime().minute()) # Default to current minute
+        timer_grid.addWidget(self.spin_end_min, 1, 2)
+        btn_set_end_now = QtWidgets.QPushButton("현재시간")
+        btn_set_end_now.clicked.connect(self._set_end_time_now)
+        timer_grid.addWidget(btn_set_end_now, 1, 3)
+        
+        # Target device
+        timer_grid.addWidget(QtWidgets.QLabel("제어 대상:"), 2, 0)
+        self.cmb_timer_target = QtWidgets.QComboBox()
+        self.cmb_timer_target.addItems(["전체 LED", "양액 펌프", "UV 필터"])
+        timer_grid.addWidget(self.cmb_timer_target, 2, 1, 1, 3) # Span 3 columns now
+
+        # Start button
+        btn_start_timer = QtWidgets.QPushButton("타이머 시작")
+        btn_start_timer.clicked.connect(self.handle_timer_command)
+        timer_grid.addWidget(btn_start_timer, 3, 0, 1, 4) # Span 4 columns now
 
     # ============================================================
     # UI Helpers
@@ -110,6 +158,16 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
     def set_request_count(self, n: int):
         self.lbl_req_count.setText(str(n))
+        
+    def _set_start_time_now(self):
+        current_time = QtCore.QTime.currentTime()
+        self.spin_start_hour.setValue(current_time.hour())
+        self.spin_start_min.setValue(current_time.minute())
+
+    def _set_end_time_now(self):
+        current_time = QtCore.QTime.currentTime()
+        self.spin_end_hour.setValue(current_time.hour())
+        self.spin_end_min.setValue(current_time.minute())
 
     # ============================================================
     # Hardware Control Slots
@@ -132,13 +190,32 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.set_serial_status(f"채널별 LED 설정 명령 예약: {settings}")
         hw.submit_command('channel_led', settings)
 
-    def handle_timer_command(self, settings: dict):
-        target = settings['target']
-        end_time = settings['end_time']
+    def sync_bms_time(self):
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        self.set_serial_status(f"BMS 시간 동기화 명령 예약: {hour:02d}:{minute:02d}")
+        hw.submit_command('bms_time_sync', (hour, minute))
+
+    def handle_timer_command(self):
+        target = self.cmb_timer_target.currentText()
+        
+        start_hour = self.spin_start_hour.value()
+        start_min = self.spin_start_min.value()
+        start_time = QtCore.QTime(start_hour, start_min)
+
+        end_hour = self.spin_end_hour.value()
+        end_min = self.spin_end_min.value()
+        end_time = QtCore.QTime(end_hour, end_min)
         
         current_time = QtCore.QTime.currentTime()
+        # For a simple 'turn off at end_time' timer, we use msecsTo(end_time)
         msecs_until_end = current_time.msecsTo(end_time)
 
+        # If start_time is in the future, we would need to schedule a separate 'turn on' event.
+        # For now, focusing on the 'turn off' at end_time.
+        # If the user wants an 'on duration' from start to end, that would be more complex.
+        
         if msecs_until_end < 0:
             self.set_serial_status(f"[경고] 타이머 종료 시간이 이미 지났습니다.")
             return
