@@ -1,54 +1,55 @@
 plugins {
     id 'java'
     id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
 }
 
-group = 'com.example'
+group = 'com.example.anygrow'
 version = '1.0.0'
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
-}
 
 repositories {
     mavenCentral()
 }
 
-dependencies {
-    implementation 'com.fazecast:jSerialComm:2.11.0'
-    implementation 'org.java-websocket:Java-WebSocket:1.5.6'
-
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+java {
+    // JDK 17 기준 (이미 17 쓰고 있다면 그대로)
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
-test {
-    useJUnitPlatform()
+// JavaFX 설정 (플러그인이 알아서 JavaFX 라이브러리 가져옴)
+javafx {
+    // LTS 버전 중 하나. 17 써도 되고, 21 써도 됨.
+    version = '21'
+    modules = [ 'javafx.controls' ]   // controls 안에 base/graphics까지 전부 포함됨
+}
+
+dependencies {
+    // WebSocket 서버/클라이언트용
+    implementation 'org.java-websocket:Java-WebSocket:1.5.6'
+
+    // 시리얼 통신 (COM 포트)
+    implementation 'com.fazecast:jSerialComm:2.11.4'
+
+    // 로깅 (SLF4J + simple 바인딩)
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    runtimeOnly  'org.slf4j:slf4j-simple:2.0.17'
 }
 
 application {
-    // gradle run 으로 실행될 메인 클래스
+    // gradle run 으로 실행할 JavaFX 메인 클래스
+    mainClass = 'com.example.anygrow.Anygrow2FxApp'
+}
+
+// 예전처럼 서버만 따로 돌리고 싶을 때 사용할 실행 타스크 (선택 사항)
+tasks.register('runServer', JavaExec) {
+    group = 'application'
+    description = 'Run serial + WebSocket server (console version)'
+    classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.example.anygrow.Anygrow2Server'
+
+    // 예: gradle runServer -Pport=COM5
+    if (project.hasProperty('port')) {
+        args project.property('port')
+    }
 }
-
-tasks.register('runClient', JavaExec) {
-    group = 'application'
-    description = 'Run Anygrow2Client (WebSocket client)'
-
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.example.anygrow.Anygrow2Client'
-}
-
-tasks.register('runGuiClient', JavaExec) {
-    group = 'application'
-    description = 'Run Anygrow2GuiClient (Swing GUI)'
-
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.example.anygrow.Anygrow2GuiFrame'
-
-    // 필요하면 기본 WebSocket 주소 지정 가능 (생략해도 됨)
-    // args 'ws://localhost:52273'
-}
-
-
-
