@@ -1,5 +1,6 @@
 package com.example.anygrow;
 
+import javafx.util.StringConverter;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -17,6 +18,7 @@ import javafx.stage.Stage;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
+import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.LocalTime;
@@ -27,7 +29,7 @@ import java.time.format.DateTimeParseException;
  * Anygrow2 JavaFX GUI Client
  *
  * 기능:
- *  - Anygrow2Server(Java)와 WebSocket으로 직접 통신
+ *  - Anygrow2Server(Java)와 WebSocket으로 통신
  *  - 센서 값 표시 (온도 / 습도 / CO₂ / 조도)
  *  - 센서 4개 라인 차트
  *  - 임계값 기반 경고 영역
@@ -36,15 +38,16 @@ import java.time.format.DateTimeParseException;
  *      * 프로필 5개
  *      * 각 프로필당 최대 3개의 시간 구간(세그먼트)
  *      * 세그먼트별 모드: "On" 또는 "Mood"
- *      * 어떤 세그먼트에도 속하지 않는 시간대는 기본적으로 "Off"
- *  - 24시간 타임라인:
- *      * 기본: OFF = 회색
- *      * ON 구간 = 초록색
- *      * MOOD 구간 = 파란색
+ *      * 세그먼트 밖은 기본적으로 "Off"
+ *  - 24시간 타임라인 (OFF = 회색, ON = 초록, MOOD = 파랑)
  *
- *  변경 사항:
- *      - 경고(Alerts) 창을 중앙 오른쪽에서 아래쪽 타이머 옆으로 이동
- *      - 중앙 영역은 그래프가 더 넓게 사용
+ *  레이아웃:
+ *      - 중앙: 센서 값 + 큰 그래프
+ *      - 하단: 왼쪽 타이머 + 타임라인, 오른쪽 경고창(Alerts), 맨 아래 LED 버튼
+ *
+ *  추가:
+ *      - 타이머 프로필을 파일(anygrow2_timer_profiles.dat)에 저장/로드해서
+ *        프로그램을 껐다 켜도 프로필이 유지되도록 구현
  */
 public class Anygrow2FxApp extends Application {
 
@@ -73,14 +76,17 @@ public class Anygrow2FxApp extends Application {
     // --- 타이머 & 프로필 (멀티 세그먼트) ---
 
     private static final int MAX_SEGMENTS = 3;
+    private static final String PROFILE_SAVE_FILE = "anygrow2_timer_profiles.dat";
 
-    private static class TimerSegment {
+    private static class TimerSegment implements Serializable {
+        private static final long serialVersionUID = 1L;
         LocalTime start;
         LocalTime end;
         String mode;    // "On" or "Mood"
     }
 
-    private static class TimerProfile {
+    private static class TimerProfile implements Serializable {
+        private static final long serialVersionUID = 1L;
         String name;
         TimerSegment[] segments = new TimerSegment[MAX_SEGMENTS];
         boolean enabled;
@@ -132,17 +138,14 @@ public class Anygrow2FxApp extends Application {
         topBar.getChildren().addAll(statusTitle, statusLabel);
         root.setTop(topBar);
 
-        // 좌측: 센서 값
-       // 좌측: 센서 값
+        // 좌측: 센서 값 (폰트 크게)
         VBox leftBox = new VBox(10);
         leftBox.setPadding(new Insets(10));
         leftBox.setMinWidth(220);
 
-        // 제목 라벨 (조금 더 크게 + 굵게)
         Label sensorTitle = new Label("Sensor Values");
         sensorTitle.setStyle("-fx-font-size: 16pt; -fx-font-weight: bold;");
 
-        // 센서 값 라벨 (기존보다 크게)
         tempLabel = new Label("Temperature: -- °C");
         tempLabel.setStyle("-fx-font-size: 14pt;");
 
@@ -155,7 +158,6 @@ public class Anygrow2FxApp extends Application {
         illLabel  = new Label("Illumination: -- lx");
         illLabel.setStyle("-fx-font-size: 14pt;");
 
-        // VBox에 추가
         leftBox.getChildren().addAll(
                 sensorTitle,
                 tempLabel,
@@ -163,7 +165,6 @@ public class Anygrow2FxApp extends Application {
                 co2Label,
                 illLabel
         );
-
 
         // 중앙: 그래프
         NumberAxis xAxis = new NumberAxis();
@@ -182,7 +183,7 @@ public class Anygrow2FxApp extends Application {
         illSeries.setName("Illum");
         chart.getData().addAll(tempSeries, humSeries, co2Series, illSeries);
 
-        // 우측: 경고 영역 (이제 중앙이 아니라, 아래쪽으로 내려서 재사용할 예정)
+        // 경고 영역 (Alerts) — 아래쪽으로 내려서 사용할 것
         VBox rightBox = new VBox(5);
         rightBox.setPadding(new Insets(10));
         rightBox.setMinWidth(230);
@@ -197,21 +198,21 @@ public class Anygrow2FxApp extends Application {
         rightBox.getChildren().addAll(alertsTitle, alertsArea);
         VBox.setVgrow(alertsArea, Priority.ALWAYS);
 
-        // 중앙 패널 합치기 (이제 오른쪽에는 아무 것도 두지 않음)
+        // 중앙 패널: 좌측 센서값 + 중앙 그래프
         BorderPane centerPanel = new BorderPane();
         centerPanel.setLeft(leftBox);
         centerPanel.setCenter(chart);
-        // centerPanel.setRight(rightBox);  // 경고창은 아래로 이동
+        // centerPanel.setRight(rightBox); // 경고창은 아래로 이동
 
         root.setCenter(centerPanel);
 
-        // 하단: 타이머 + (경고창) + LED 버튼
+        // 하단: 타이머 + 경고창 + LED 버튼
         VBox bottomBox = new VBox(10);
         bottomBox.setPadding(new Insets(10, 0, 0, 0));
 
         VBox timerPanel = buildTimerPanel();
 
-        // 타이머와 경고창을 가로로 나란히 배치
+        // 타이머와 경고창을 가로로 나란히
         HBox bottomTopRow = new HBox(10);
         bottomTopRow.getChildren().addAll(timerPanel, rightBox);
         HBox.setHgrow(timerPanel, Priority.ALWAYS);
@@ -254,11 +255,14 @@ public class Anygrow2FxApp extends Application {
             Platform.exit();
         });
 
+        // 저장된 프로필 로드
+        loadAllProfilesFromDisk();
+
         // WebSocket + 타이머 스레드 시작
         connectWebSocket();
         startTimerThread();
 
-        // 타임라인 초기 그리기
+        // 타임라인 초기 그리기 (로드된 프로필 기반)
         redrawTimeline();
     }
 
@@ -283,6 +287,63 @@ public class Anygrow2FxApp extends Application {
             comboProfileSlot.getItems().add(i);
         }
         comboProfileSlot.setValue(1);
+
+        // 프로필 드롭다운에 "슬롯 번호 + 프로필 이름" 보여주기
+        comboProfileSlot.setConverter(new StringConverter<Integer>() {
+            @Override
+            public String toString(Integer slot) {
+                if (slot == null) return "";
+                int idx = slot - 1;
+                TimerProfile p = (idx >= 0 && idx < profiles.length) ? profiles[idx] : null;
+                String name;
+                if (p != null && p.name != null && !p.name.isEmpty()) {
+                    name = p.name;
+                } else {
+                    name = "Profile " + slot;
+                }
+                // 실제로 화면에 보이는 문자열
+                return slot + ": " + name;
+            }
+
+            @Override
+            public Integer fromString(String string) {
+                if (string == null || string.isEmpty()) return null;
+                int colon = string.indexOf(':');
+                String numPart = (colon >= 0 ? string.substring(0, colon) : string).trim();
+                try {
+                    return Integer.parseInt(numPart);
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+        });
+
+        // 드롭다운 리스트 안쪽에 표시되는 셀
+        comboProfileSlot.setCellFactory(cb -> new ListCell<>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                } else {
+                    setText(comboProfileSlot.getConverter().toString(item));
+                }
+            }
+        });
+
+        // 콤보박스가 닫혀 있을 때(선택된 한 줄) 표시되는 셀
+        comboProfileSlot.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(Integer item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                } else {
+                    setText(comboProfileSlot.getConverter().toString(item));
+                }
+            }
+        });
+
 
         txtProfileName = new TextField();
         txtProfileName.setPromptText("Profile name");
@@ -553,10 +614,15 @@ public class Anygrow2FxApp extends Application {
 
             lblActiveProfile.setText(
                     "Active profile: #" + slot + " - " + p.name +
-                    " (enabled=" + p.enabled + ")"
+                            " (enabled=" + p.enabled + ")"
             );
 
             redrawTimeline();
+
+            refreshProfileComboDisplay();
+
+            // 디스크에 전체 프로필 저장
+            saveAllProfilesToDisk();
 
             Alert info = new Alert(Alert.AlertType.INFORMATION);
             info.setTitle("Timer Profile");
@@ -572,6 +638,14 @@ public class Anygrow2FxApp extends Application {
             alert.showAndWait();
         }
     }
+
+    /** 프로필 이름이 바뀐 뒤 콤보박스 표시를 다시 그리도록 강제로 갱신 */
+    private void refreshProfileComboDisplay() {
+        Integer current = comboProfileSlot.getValue();
+        comboProfileSlot.setValue(null);
+        comboProfileSlot.setValue(current);
+    }
+
 
     private void loadProfile() {
         Integer slot = comboProfileSlot.getValue();
@@ -609,7 +683,7 @@ public class Anygrow2FxApp extends Application {
 
         lblActiveProfile.setText(
                 "Active profile: #" + slot + " - " + p.name +
-                " (enabled=" + p.enabled + ")"
+                        " (enabled=" + p.enabled + ")"
         );
 
         redrawTimeline();
@@ -734,6 +808,96 @@ public class Anygrow2FxApp extends Application {
         } else {
             // 예: 22:00 ~ 06:00
             return !now.isBefore(start) || now.isBefore(end);
+        }
+    }
+
+    // ============================================================
+    // 프로필 파일 저장/로드 (직렬화 사용)
+    // ============================================================
+
+    private void saveAllProfilesToDisk() {
+        try (ObjectOutputStream oos =
+                     new ObjectOutputStream(new FileOutputStream(PROFILE_SAVE_FILE))) {
+            oos.writeObject(profiles);
+            System.out.println("[TIMER] Profiles saved to " + PROFILE_SAVE_FILE);
+        } catch (IOException e) {
+            System.err.println("[TIMER] Failed to save profiles: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadAllProfilesFromDisk() {
+        File f = new File(PROFILE_SAVE_FILE);
+        if (!f.exists()) {
+            System.out.println("[TIMER] No profile save file found.");
+            return;
+        }
+        try (ObjectInputStream ois =
+                     new ObjectInputStream(new FileInputStream(f))) {
+            Object obj = ois.readObject();
+            if (obj instanceof TimerProfile[]) {
+                TimerProfile[] loaded = (TimerProfile[]) obj;
+                for (int i = 0; i < profiles.length && i < loaded.length; i++) {
+                    profiles[i] = loaded[i];
+                }
+
+                // activeProfile 선택: enabled == true 인 것 중 첫 번째, 없으면 첫 번째 non-null
+                int activeIndex = -1;
+                for (int i = 0; i < profiles.length; i++) {
+                    if (profiles[i] != null && profiles[i].enabled) {
+                        activeIndex = i;
+                        break;
+                    }
+                }
+                if (activeIndex == -1) {
+                    for (int i = 0; i < profiles.length; i++) {
+                        if (profiles[i] != null) {
+                            activeIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (activeIndex != -1) {
+                    activeProfile = profiles[activeIndex];
+                    int slotNumber = activeIndex + 1;
+
+                    // UI 반영
+                    comboProfileSlot.setValue(slotNumber);
+                    txtProfileName.setText(activeProfile.name);
+                    chkTimerEnabled.setSelected(activeProfile.enabled);
+
+                    for (int i = 0; i < MAX_SEGMENTS; i++) {
+                        TimerSegment seg = activeProfile.segments[i];
+                        if (seg == null) {
+                            segStartFields[i].setText("");
+                            segEndFields[i].setText("");
+                            segModeCombos[i].setValue(null);
+                        } else {
+                            segStartFields[i].setText(seg.start.format(timeFormatter));
+                            segEndFields[i].setText(seg.end.format(timeFormatter));
+                            segModeCombos[i].setValue(seg.mode);
+                        }
+                    }
+
+                    lblActiveProfile.setText(
+                            "Active profile: #" + slotNumber + " - " + activeProfile.name +
+                                    " (enabled=" + activeProfile.enabled + ")"
+                    );
+
+                    System.out.println("[TIMER] Profiles loaded. Active profile #" + slotNumber);
+                } else {
+                    System.out.println("[TIMER] Profiles loaded, but no active profile.");
+                }
+            } else {
+                System.err.println("[TIMER] Profile save file has unexpected type: " +
+                        obj.getClass());
+            }
+
+        } catch (Exception e) {
+            System.err.println("[TIMER] Failed to load profiles: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
