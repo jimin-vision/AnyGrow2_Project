@@ -78,27 +78,41 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.poll_timer.setInterval(200)
         self.poll_timer.timeout.connect(self.poll_serial)
 
+        self.clock_timer = QtCore.QTimer(self)
+        self.clock_timer.setInterval(1000)
+        self.clock_timer.timeout.connect(self._update_clock)
+
     def _setup_top_bar(self, root_layout):
         top_bar = QtWidgets.QHBoxLayout()
         root_layout.addLayout(top_bar)
+
+        self.btn_reconnect = QtWidgets.QPushButton("시리얼 재연결")
+        self.btn_reconnect.clicked.connect(self.reconnect_serial)
+        
+        lbl_req_title = QtWidgets.QLabel("센서 요청 횟수:")
+        self.lbl_req_count = QtWidgets.QLabel("0")
 
         lbl_serial_title = QtWidgets.QLabel("시리얼 상태:")
         lbl_serial_title.setStyleSheet("font-weight: bold;")
         self.lbl_serial_status = QtWidgets.QLabel("프로그램 시작")
 
+        self.lbl_current_time = QtWidgets.QLabel("HH:MM:SS")
+        font = self.lbl_current_time.font()
+        font.setBold(True)
+        self.lbl_current_time.setFont(font)
+        
+        top_bar.addWidget(self.btn_reconnect)
+        top_bar.addWidget(lbl_req_title)
+        top_bar.addWidget(self.lbl_req_count)
+        top_bar.addSpacing(20)
         top_bar.addWidget(lbl_serial_title)
         top_bar.addWidget(self.lbl_serial_status)
         top_bar.addStretch(1)
+        top_bar.addWidget(self.lbl_current_time)
 
-        self.btn_reconnect = QtWidgets.QPushButton("시리얼 재연결")
-        self.btn_reconnect.clicked.connect(self.reconnect_serial)
-        top_bar.addWidget(self.btn_reconnect)
-
-        lbl_req_title = QtWidgets.QLabel("센서 요청 횟수:")
-        self.lbl_req_count = QtWidgets.QLabel("0")
-
-        top_bar.addWidget(lbl_req_title)
-        top_bar.addWidget(self.lbl_req_count)
+    def _update_clock(self):
+        now_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        self.lbl_current_time.setText(now_str)
         
     def _setup_timer_controls(self):
         self.gb_timer = QtWidgets.QGroupBox("타이머 제어")
@@ -312,6 +326,8 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
     def start_timers(self):
         if not self.poll_timer.isActive():
             self.poll_timer.start()
+        if not self.clock_timer.isActive():
+            self.clock_timer.start()
 
     def try_init_serial(self):
         try:

@@ -38,10 +38,10 @@ LED_PACKETS = {
     "On": bytes.fromhex("0201FF4CFF00FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"),
 }
 
-PUMP_ON_PACKET = None
-PUMP_OFF_PACKET = None
-UV_ON_PACKET = None
-UV_OFF_PACKET = None
+PUMP_ON_PACKET = bytes.fromhex("0200FF59FF01FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
+PUMP_OFF_PACKET = bytes.fromhex("0200FF59FF01FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
+UV_ON_PACKET = bytes.fromhex("0200FF59FF02FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
+UV_OFF_PACKET = bytes.fromhex("0200FF59FF02FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
 
 # -----------------------------
 # 내부 상태
@@ -219,12 +219,18 @@ def _command_worker_loop():
                     now = datetime.now()
                     hour_bcd = dec_to_bcd(now.hour)
                     minute_bcd = dec_to_bcd(now.minute)
+                    second_bcd = dec_to_bcd(now.second)
+                    
                     hour_hex = f"{hour_bcd:02x}"
                     minute_hex = f"{minute_bcd:02x}"
+                    second_hex = f"{second_bcd:02x}"
                     
-                    print(f"[CMD] BMS 시간 동기화 명령 전송: {now.hour:02d}:{now.minute:02d}")
+                    print(f"[CMD] BMS 시간 동기화 명령 전송: {now.hour:02d}:{now.minute:02d}:{now.second:02d}")
                     
-                    packet_str = f"0202FF54FF00FF{hour_hex}{minute_hex}000000FFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
+                    # Packet string with BCD hour, minute, and second (at byte 9)
+                    # The '0000' after second_hex and before FFFFF... is to maintain the 30-byte length and
+                    # use the structure derived from the .exe packet capture (00 00 00 was originally bytes 9, 10, 11)
+                    packet_str = f"0202FF54FF00FF{hour_hex}{minute_hex}{second_hex}0000FFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
                     packet_to_send = bytes.fromhex(packet_str)
 
                 elif cmd == 'sensor_req':
