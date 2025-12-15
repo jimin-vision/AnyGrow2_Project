@@ -24,22 +24,26 @@ class IntervalWidget(QtWidgets.QFrame):
         self.spin_start_hour = QtWidgets.QSpinBox()
         self.spin_start_hour.setRange(0, 23)
         self.spin_start_hour.setValue(current_time.hour())
-        self.spin_start_hour.setFixedWidth(38)
+        self.spin_start_hour.setFixedWidth(60)
+        self.spin_start_hour.setAlignment(QtCore.Qt.AlignRight)
         
         self.spin_start_min = QtWidgets.QSpinBox()
         self.spin_start_min.setRange(0, 59)
         self.spin_start_min.setValue(current_time.minute())
-        self.spin_start_min.setFixedWidth(38)
+        self.spin_start_min.setFixedWidth(60)
+        self.spin_start_min.setAlignment(QtCore.Qt.AlignRight)
 
         self.spin_end_hour = QtWidgets.QSpinBox()
         self.spin_end_hour.setRange(0, 23)
         self.spin_end_hour.setValue(current_time.hour())
-        self.spin_end_hour.setFixedWidth(38)
+        self.spin_end_hour.setFixedWidth(60)
+        self.spin_end_hour.setAlignment(QtCore.Qt.AlignRight)
 
         self.spin_end_min = QtWidgets.QSpinBox()
         self.spin_end_min.setRange(0, 59)
         self.spin_end_min.setValue(current_time.minute())
-        self.spin_end_min.setFixedWidth(38)
+        self.spin_end_min.setFixedWidth(60)
+        self.spin_end_min.setAlignment(QtCore.Qt.AlignRight)
 
         # ComboBoxes
         self.cmb_action = QtWidgets.QComboBox()

@@ -63,7 +63,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
         # Calculate optimal size and set fixed size
         optimal_size = self.sizeHint()
-        self.setFixedSize(int(optimal_size.width() * 1.05), int(optimal_size.height() * 1.0))
+        self.setFixedSize(int(optimal_size.width() * 1.05), int(optimal_size.height() * 0.95))
 
         # =============================
         # Connect Signals
