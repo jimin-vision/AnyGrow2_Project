@@ -1,10 +1,10 @@
 package com.example.anygrow;
 
-import javafx.util.StringConverter;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -15,6 +15,7 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
+import javafx.util.StringConverter;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
@@ -31,7 +32,7 @@ import java.time.format.DateTimeParseException;
  * 기능:
  *  - Anygrow2Server(Java)와 WebSocket으로 통신
  *  - 센서 값 표시 (온도 / 습도 / CO₂ / 조도)
- *  - 센서 4개 라인 차트
+ *  - 센서별 라인 차트 (2x2 배치)
  *  - 임계값 기반 경고 영역
  *  - LED 제어 버튼: OFF / ON / MOOD
  *  - LED 타이머:
@@ -40,14 +41,7 @@ import java.time.format.DateTimeParseException;
  *      * 세그먼트별 모드: "On" 또는 "Mood"
  *      * 세그먼트 밖은 기본적으로 "Off"
  *  - 24시간 타임라인 (OFF = 회색, ON = 초록, MOOD = 파랑)
- *
- *  레이아웃:
- *      - 중앙: 센서 값 + 큰 그래프
- *      - 하단: 왼쪽 타이머 + 타임라인, 오른쪽 경고창(Alerts), 맨 아래 LED 버튼
- *
- *  추가:
- *      - 타이머 프로필을 파일(anygrow2_timer_profiles.dat)에 저장/로드해서
- *        프로그램을 껐다 켜도 프로필이 유지되도록 구현
+ *  - 타이머 프로필을 파일(anygrow2_timer_profiles.dat)에 저장/로드
  */
 public class Anygrow2FxApp extends Application {
 
@@ -66,15 +60,14 @@ public class Anygrow2FxApp extends Application {
     private Label illLabel;
     private TextArea alertsArea;
 
-    // --- 그래프 ---
-    private XYChart.Series<Number, Number> tempSeries = new XYChart.Series<>();
-    private XYChart.Series<Number, Number> humSeries  = new XYChart.Series<>();
-    private XYChart.Series<Number, Number> co2Series  = new XYChart.Series<>();
-    private XYChart.Series<Number, Number> illSeries  = new XYChart.Series<>();
+    // --- 그래프 시리즈 ---
+    private final XYChart.Series<Number, Number> tempSeries = new XYChart.Series<>();
+    private final XYChart.Series<Number, Number> humSeries  = new XYChart.Series<>();
+    private final XYChart.Series<Number, Number> co2Series  = new XYChart.Series<>();
+    private final XYChart.Series<Number, Number> illSeries  = new XYChart.Series<>();
     private int sampleIndex = 0;
 
     // --- 타이머 & 프로필 (멀티 세그먼트) ---
-
     private static final int MAX_SEGMENTS = 3;
     private static final String PROFILE_SAVE_FILE = "anygrow2_timer_profiles.dat";
 
@@ -102,17 +95,16 @@ public class Anygrow2FxApp extends Application {
     private Label lblActiveProfile;
 
     // 세그먼트 UI
-    private TextField[] segStartFields = new TextField[MAX_SEGMENTS];
-    private TextField[] segEndFields   = new TextField[MAX_SEGMENTS];
-    private ComboBox<String>[] segModeCombos = new ComboBox[MAX_SEGMENTS];
+    private final TextField[] segStartFields = new TextField[MAX_SEGMENTS];
+    private final TextField[] segEndFields   = new TextField[MAX_SEGMENTS];
+    private final ComboBox<String>[] segModeCombos = new ComboBox[MAX_SEGMENTS];
 
     // 타임라인 캔버스
     private Canvas timerCanvas;
 
     // 타이머 스레드
     private volatile boolean timerThreadRunning = true;
-    // 마지막으로 서버에 전송한 모드 ("Off" / "On" / "Mood")
-    private volatile String lastSentMode = null;
+    private volatile String lastSentMode = null;   // 마지막 서버에 보낸 LED 모드
 
     private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
 
@@ -166,24 +158,61 @@ public class Anygrow2FxApp extends Application {
                 illLabel
         );
 
-        // 중앙: 그래프
-        NumberAxis xAxis = new NumberAxis();
-        xAxis.setLabel("Samples");
-        NumberAxis yAxis = new NumberAxis();
-        yAxis.setLabel("Value");
+        // 중앙: 센서별 그래프 2x2
 
-        LineChart<Number, Number> chart = new LineChart<>(xAxis, yAxis);
-        chart.setCreateSymbols(false);
-        chart.setAnimated(false);
-        chart.setLegendVisible(true);
+        // 온도
+        NumberAxis xTempAxis = new NumberAxis();
+        xTempAxis.setLabel("Samples");
+        NumberAxis yTempAxis = new NumberAxis(0, 50, 10);   // 예시 범위
+        yTempAxis.setLabel("Temperature (°C)");
+        LineChart<Number, Number> tempChart =
+                createSensorChart(xTempAxis, yTempAxis, "Temp", tempSeries);
 
-        tempSeries.setName("Temp");
-        humSeries.setName("Hum");
-        co2Series.setName("CO₂");
-        illSeries.setName("Illum");
-        chart.getData().addAll(tempSeries, humSeries, co2Series, illSeries);
+        // 습도
+        NumberAxis xHumAxis = new NumberAxis();
+        xHumAxis.setLabel("Samples");
+        NumberAxis yHumAxis = new NumberAxis(0, 100, 20);
+        yHumAxis.setLabel("Humidity (%)");
+        LineChart<Number, Number> humChart =
+                createSensorChart(xHumAxis, yHumAxis, "Hum", humSeries);
 
-        // 경고 영역 (Alerts) — 아래쪽으로 내려서 사용할 것
+        // CO₂
+        NumberAxis xCo2Axis = new NumberAxis();
+        xCo2Axis.setLabel("Samples");
+        NumberAxis yCo2Axis = new NumberAxis(0, 6000, 1000);
+        yCo2Axis.setLabel("CO₂ (ppm)");
+        LineChart<Number, Number> co2Chart =
+                createSensorChart(xCo2Axis, yCo2Axis, "CO₂", co2Series);
+
+        // 조도
+        NumberAxis xIllAxis = new NumberAxis();
+        xIllAxis.setLabel("Samples");
+        NumberAxis yIllAxis = new NumberAxis(0, 2000, 500);
+        yIllAxis.setLabel("Illumination (lx)");
+        LineChart<Number, Number> illChart =
+                createSensorChart(xIllAxis, yIllAxis, "Illum", illSeries);
+
+        // 2x2 Grid 레이아웃
+        GridPane chartsGrid = new GridPane();
+        chartsGrid.setHgap(5);
+        chartsGrid.setVgap(5);
+        chartsGrid.setPadding(new Insets(0));
+
+        chartsGrid.add(tempChart, 0, 0);
+        chartsGrid.add(humChart, 1, 0);
+        chartsGrid.add(co2Chart, 0, 1);
+        chartsGrid.add(illChart, 1, 1);
+
+        GridPane.setHgrow(tempChart, Priority.ALWAYS);
+        GridPane.setHgrow(humChart, Priority.ALWAYS);
+        GridPane.setHgrow(co2Chart, Priority.ALWAYS);
+        GridPane.setHgrow(illChart, Priority.ALWAYS);
+        GridPane.setVgrow(tempChart, Priority.ALWAYS);
+        GridPane.setVgrow(humChart, Priority.ALWAYS);
+        GridPane.setVgrow(co2Chart, Priority.ALWAYS);
+        GridPane.setVgrow(illChart, Priority.ALWAYS);
+
+        // 경고 영역 (Alerts) — 아래쪽으로 이동해서 사용할 예정
         VBox rightBox = new VBox(5);
         rightBox.setPadding(new Insets(10));
         rightBox.setMinWidth(230);
@@ -198,11 +227,10 @@ public class Anygrow2FxApp extends Application {
         rightBox.getChildren().addAll(alertsTitle, alertsArea);
         VBox.setVgrow(alertsArea, Priority.ALWAYS);
 
-        // 중앙 패널: 좌측 센서값 + 중앙 그래프
+        // 중앙 패널: 좌측 센서값 + 중앙 그래프들
         BorderPane centerPanel = new BorderPane();
         centerPanel.setLeft(leftBox);
-        centerPanel.setCenter(chart);
-        // centerPanel.setRight(rightBox); // 경고창은 아래로 이동
+        centerPanel.setCenter(chartsGrid);
 
         root.setCenter(centerPanel);
 
@@ -262,8 +290,36 @@ public class Anygrow2FxApp extends Application {
         connectWebSocket();
         startTimerThread();
 
-        // 타임라인 초기 그리기 (로드된 프로필 기반)
+        // 타임라인 초기 그리기
         redrawTimeline();
+    }
+
+    /** 센서 한 개에 대한 라인 차트를 만들어 주는 헬퍼 (2x2 배치용) */
+    private LineChart<Number, Number> createSensorChart(NumberAxis xAxis,
+                                                        NumberAxis yAxis,
+                                                        String seriesName,
+                                                        XYChart.Series<Number, Number> series) {
+        LineChart<Number, Number> chart = new LineChart<>(xAxis, yAxis);
+        chart.setCreateSymbols(false);
+        chart.setAnimated(false);
+        chart.setLegendVisible(false);
+        chart.setMinHeight(120);
+
+        series.setName(seriesName);
+        chart.getData().add(series);
+
+        // 선 두께를 조금 두껍게 (Scene에 붙고 나서 스타일 적용)
+        chart.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                Platform.runLater(() -> {
+                    for (Node n : chart.lookupAll(".chart-series-line")) {
+                        n.setStyle("-fx-stroke-width: 2px;");
+                    }
+                });
+            }
+        });
+
+        return chart;
     }
 
     // ============================================================
@@ -288,8 +344,8 @@ public class Anygrow2FxApp extends Application {
         }
         comboProfileSlot.setValue(1);
 
-        // 프로필 드롭다운에 "슬롯 번호 + 프로필 이름" 보여주기
-        comboProfileSlot.setConverter(new StringConverter<Integer>() {
+        // 콤보박스에 "슬롯 번호: 프로필 이름" 표시
+        comboProfileSlot.setConverter(new StringConverter<>() {
             @Override
             public String toString(Integer slot) {
                 if (slot == null) return "";
@@ -301,7 +357,6 @@ public class Anygrow2FxApp extends Application {
                 } else {
                     name = "Profile " + slot;
                 }
-                // 실제로 화면에 보이는 문자열
                 return slot + ": " + name;
             }
 
@@ -317,8 +372,6 @@ public class Anygrow2FxApp extends Application {
                 }
             }
         });
-
-        // 드롭다운 리스트 안쪽에 표시되는 셀
         comboProfileSlot.setCellFactory(cb -> new ListCell<>() {
             @Override
             protected void updateItem(Integer item, boolean empty) {
@@ -330,8 +383,6 @@ public class Anygrow2FxApp extends Application {
                 }
             }
         });
-
-        // 콤보박스가 닫혀 있을 때(선택된 한 줄) 표시되는 셀
         comboProfileSlot.setButtonCell(new ListCell<>() {
             @Override
             protected void updateItem(Integer item, boolean empty) {
@@ -343,7 +394,6 @@ public class Anygrow2FxApp extends Application {
                 }
             }
         });
-
 
         txtProfileName = new TextField();
         txtProfileName.setPromptText("Profile name");
@@ -421,6 +471,12 @@ public class Anygrow2FxApp extends Application {
         );
 
         return timerRoot;
+    }
+
+    private void refreshProfileComboDisplay() {
+        Integer current = comboProfileSlot.getValue();
+        comboProfileSlot.setValue(null);
+        comboProfileSlot.setValue(current);
     }
 
     // ============================================================
@@ -603,14 +659,14 @@ public class Anygrow2FxApp extends Application {
                 TimerSegment seg = new TimerSegment();
                 seg.start = start;
                 seg.end   = end;
-                seg.mode  = mode;  // "On" 또는 "Mood"
+                seg.mode  = mode;
 
                 p.segments[i] = seg;
             }
 
             profiles[idx] = p;
             activeProfile = p;
-            lastSentMode = null; // 다음 타이머 체크 때 다시 전송 가능하도록 초기화
+            lastSentMode = null;
 
             lblActiveProfile.setText(
                     "Active profile: #" + slot + " - " + p.name +
@@ -619,6 +675,7 @@ public class Anygrow2FxApp extends Application {
 
             redrawTimeline();
 
+            // 콤보박스 표시 갱신
             refreshProfileComboDisplay();
 
             // 디스크에 전체 프로필 저장
@@ -638,14 +695,6 @@ public class Anygrow2FxApp extends Application {
             alert.showAndWait();
         }
     }
-
-    /** 프로필 이름이 바뀐 뒤 콤보박스 표시를 다시 그리도록 강제로 갱신 */
-    private void refreshProfileComboDisplay() {
-        Integer current = comboProfileSlot.getValue();
-        comboProfileSlot.setValue(null);
-        comboProfileSlot.setValue(current);
-    }
-
 
     private void loadProfile() {
         Integer slot = comboProfileSlot.getValue();
@@ -687,6 +736,7 @@ public class Anygrow2FxApp extends Application {
         );
 
         redrawTimeline();
+        refreshProfileComboDisplay();
     }
 
     private void redrawTimeline() {
@@ -722,7 +772,6 @@ public class Anygrow2FxApp extends Application {
                 g.setFill(color);
 
                 if (startRatio == endRatio) {
-                    // 하루 전체 구간
                     g.fillRoundRect(barX, barY, barW, barH, 10, 10);
                 } else if (startRatio < endRatio) {
                     double x1 = barX + barW * startRatio;
@@ -756,8 +805,7 @@ public class Anygrow2FxApp extends Application {
                     if (p != null && p.enabled && client != null && client.isOpen()) {
                         LocalTime now = LocalTime.now().withSecond(0).withNano(0);
 
-                        // 기본 모드 = Off
-                        String desiredMode = "Off";
+                        String desiredMode = "Off"; // 기본값
 
                         // 현재 시간이 어떤 세그먼트에 포함되는지 확인
                         for (int i = 0; i < MAX_SEGMENTS; i++) {
@@ -770,7 +818,6 @@ public class Anygrow2FxApp extends Application {
                             }
                         }
 
-                        // 모드가 바뀌었을 때만 서버로 전송
                         if (lastSentMode == null || !lastSentMode.equals(desiredMode)) {
                             System.out.println("[TIMER] Desired LED mode = " + desiredMode + " at " + now);
                             sendSerialWrite(desiredMode);
@@ -794,10 +841,6 @@ public class Anygrow2FxApp extends Application {
 
     /**
      * now 가 [start, end) 구간 안에 들어가는지 판별 (자정 넘어가는 구간 포함)
-     *
-     * - start == end : 하루 전체(true)
-     * - start < end  : 일반 구간 → start <= now < end
-     * - start > end  : 자정 넘어가는 구간 → now >= start 또는 now < end
      */
     private boolean isWithinSegment(LocalTime now, LocalTime start, LocalTime end) {
         if (start.equals(end)) {
@@ -812,7 +855,7 @@ public class Anygrow2FxApp extends Application {
     }
 
     // ============================================================
-    // 프로필 파일 저장/로드 (직렬화 사용)
+    // 프로필 파일 저장/로드
     // ============================================================
 
     private void saveAllProfilesToDisk() {
@@ -826,7 +869,6 @@ public class Anygrow2FxApp extends Application {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void loadAllProfilesFromDisk() {
         File f = new File(PROFILE_SAVE_FILE);
         if (!f.exists()) {
@@ -842,7 +884,6 @@ public class Anygrow2FxApp extends Application {
                     profiles[i] = loaded[i];
                 }
 
-                // activeProfile 선택: enabled == true 인 것 중 첫 번째, 없으면 첫 번째 non-null
                 int activeIndex = -1;
                 for (int i = 0; i < profiles.length; i++) {
                     if (profiles[i] != null && profiles[i].enabled) {
@@ -863,7 +904,6 @@ public class Anygrow2FxApp extends Application {
                     activeProfile = profiles[activeIndex];
                     int slotNumber = activeIndex + 1;
 
-                    // UI 반영
                     comboProfileSlot.setValue(slotNumber);
                     txtProfileName.setText(activeProfile.name);
                     chkTimerEnabled.setSelected(activeProfile.enabled);
@@ -886,6 +926,7 @@ public class Anygrow2FxApp extends Application {
                                     " (enabled=" + activeProfile.enabled + ")"
                     );
 
+                    refreshProfileComboDisplay();
                     System.out.println("[TIMER] Profiles loaded. Active profile #" + slotNumber);
                 } else {
                     System.out.println("[TIMER] Profiles loaded, but no active profile.");
