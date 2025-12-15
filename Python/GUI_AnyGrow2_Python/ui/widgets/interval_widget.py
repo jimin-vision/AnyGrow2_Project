@@ -18,32 +18,28 @@ class IntervalWidget(QtWidgets.QFrame):
         font.setBold(True)
         self.lbl_num.setFont(font)
 
-        # Time Inputs using QLineEdit with Validators
+        # Time Inputs using QSpinBox
         current_time = QtCore.QTime.currentTime()
         
-        self.le_start_hour = QtWidgets.QLineEdit(str(current_time.hour()))
-        self.le_start_hour.setValidator(QtGui.QIntValidator(0, 23, self))
-        self.le_start_hour.setFixedWidth(40)
-        self.le_start_hour.setAlignment(QtCore.Qt.AlignRight)
-        self.le_start_hour.setPlaceholderText("Hour")
+        self.spin_start_hour = QtWidgets.QSpinBox()
+        self.spin_start_hour.setRange(0, 23)
+        self.spin_start_hour.setValue(current_time.hour())
+        self.spin_start_hour.setFixedWidth(38)
         
-        self.le_start_min = QtWidgets.QLineEdit(str(current_time.minute()))
-        self.le_start_min.setValidator(QtGui.QIntValidator(0, 59, self))
-        self.le_start_min.setFixedWidth(40)
-        self.le_start_min.setAlignment(QtCore.Qt.AlignRight)
-        self.le_start_min.setPlaceholderText("Min")
+        self.spin_start_min = QtWidgets.QSpinBox()
+        self.spin_start_min.setRange(0, 59)
+        self.spin_start_min.setValue(current_time.minute())
+        self.spin_start_min.setFixedWidth(38)
 
-        self.le_end_hour = QtWidgets.QLineEdit(str(current_time.hour()))
-        self.le_end_hour.setValidator(QtGui.QIntValidator(0, 23, self))
-        self.le_end_hour.setFixedWidth(40)
-        self.le_end_hour.setAlignment(QtCore.Qt.AlignRight)
-        self.le_end_hour.setPlaceholderText("Hour")
+        self.spin_end_hour = QtWidgets.QSpinBox()
+        self.spin_end_hour.setRange(0, 23)
+        self.spin_end_hour.setValue(current_time.hour())
+        self.spin_end_hour.setFixedWidth(38)
 
-        self.le_end_min = QtWidgets.QLineEdit(str(current_time.minute()))
-        self.le_end_min.setValidator(QtGui.QIntValidator(0, 59, self))
-        self.le_end_min.setFixedWidth(40)
-        self.le_end_min.setAlignment(QtCore.Qt.AlignRight)
-        self.le_end_min.setPlaceholderText("Min")
+        self.spin_end_min = QtWidgets.QSpinBox()
+        self.spin_end_min.setRange(0, 59)
+        self.spin_end_min.setValue(current_time.minute())
+        self.spin_end_min.setFixedWidth(38)
 
         # ComboBoxes
         self.cmb_action = QtWidgets.QComboBox()
@@ -60,14 +56,14 @@ class IntervalWidget(QtWidgets.QFrame):
 
         # Add widgets to layout
         layout.addWidget(self.lbl_num)
-        layout.addStretch(1) # This is the key change
-        layout.addWidget(self.le_start_hour)
+        layout.addStretch(1) 
+        layout.addWidget(self.spin_start_hour)
         layout.addWidget(QtWidgets.QLabel(":"))
-        layout.addWidget(self.le_start_min)
+        layout.addWidget(self.spin_start_min)
         layout.addWidget(QtWidgets.QLabel("~"))
-        layout.addWidget(self.le_end_hour)
+        layout.addWidget(self.spin_end_hour)
         layout.addWidget(QtWidgets.QLabel(":"))
-        layout.addWidget(self.le_end_min)
+        layout.addWidget(self.spin_end_min)
         layout.addWidget(self.cmb_target)
         layout.addWidget(self.cmb_action)
         layout.addWidget(btn_set_now)
@@ -75,20 +71,8 @@ class IntervalWidget(QtWidgets.QFrame):
 
     def get_values(self):
         """Returns the current settings of the widget."""
-        try:
-            start_hour = int(self.le_start_hour.text())
-            start_min = int(self.le_start_min.text())
-            end_hour = int(self.le_end_hour.text())
-            end_min = int(self.le_end_min.text())
-        except (ValueError, TypeError):
-            # Return null QTime if text is not a valid int
-            return { 
-                "start_time": QtCore.QTime(), "end_time": QtCore.QTime(),
-                "action": "", "target": ""
-            }
-
-        start_time = QtCore.QTime(start_hour, start_min)
-        end_time = QtCore.QTime(end_hour, end_min)
+        start_time = QtCore.QTime(self.spin_start_hour.value(), self.spin_start_min.value())
+        end_time = QtCore.QTime(self.spin_end_hour.value(), self.spin_end_min.value())
         return {
             "start_time": start_time,
             "end_time": end_time,
@@ -101,5 +85,5 @@ class IntervalWidget(QtWidgets.QFrame):
 
     def _set_start_time_now(self):
         current_time = QtCore.QTime.currentTime()
-        self.le_start_hour.setText(str(current_time.hour()))
-        self.le_start_min.setText(str(current_time.minute()))
+        self.spin_start_hour.setValue(current_time.hour())
+        self.spin_start_min.setValue(current_time.minute())

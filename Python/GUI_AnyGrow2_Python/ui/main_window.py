@@ -63,7 +63,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
         # Calculate optimal size and set fixed size
         optimal_size = self.sizeHint()
-        self.setFixedSize(int(optimal_size.width() * 0.95), int(optimal_size.height() * 1.2))
+        self.setFixedSize(int(optimal_size.width() * 1.05), int(optimal_size.height() * 1.0))
 
         # =============================
         # Connect Signals
@@ -132,7 +132,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         scroll_area.setWidget(scroll_widget)
         
         # Set a reasonable minimum height for the scroll area
-        scroll_area.setMinimumHeight(150)
+        scroll_area.setMinimumHeight(200)
 
         # Buttons at the bottom
         btn_layout = QtWidgets.QHBoxLayout()
