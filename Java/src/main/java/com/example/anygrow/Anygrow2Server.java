@@ -307,16 +307,24 @@ public class Anygrow2Server extends WebSocketServer {
 
     // ====== main ======
     public static void main(String[] args) {
-        // 시리얼 포트 이름 인자: 예) "COM5" 또는 "/dev/ttyUSB0"
-        String portName = args.length > 0 ? args[0] : "COM5";
+    String portName = args.length > 0 ? args[0] : "COM5";
 
-        InetSocketAddress addr = new InetSocketAddress("0.0.0.0", 52273);
-        Anygrow2Server server = new Anygrow2Server(addr, portName);
+    InetSocketAddress addr = new InetSocketAddress("0.0.0.0", 52273);
+    Anygrow2Server wsServer = new Anygrow2Server(addr, portName);
 
-        System.out.println("[SERVER] Anygrow2 Java Server starting...");
-        System.out.println("[SERVER] WebSocket: ws://0.0.0.0:52273");
-        System.out.println("[SERVER] SerialPort: " + portName);
+    System.out.println("[SERVER] Anygrow2 Java Server starting...");
+    System.out.println("[SERVER] WebSocket: ws://0.0.0.0:52273");
+    System.out.println("[SERVER] SerialPort: " + portName);
 
-        server.start();
+    wsServer.start();
+
+    // ★ HTTP 서버 추가 (웹 UI / API)
+    try {
+        AnygrowHttpServer http = new AnygrowHttpServer("0.0.0.0", 8080);
+        http.start();
+    } catch (Exception e) {
+        System.err.println("[HTTP] 서버 시작 실패: " + e.getMessage());
+        e.printStackTrace();
     }
+}
 }

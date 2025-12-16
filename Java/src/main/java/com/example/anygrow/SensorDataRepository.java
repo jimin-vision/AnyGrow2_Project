@@ -148,4 +148,31 @@ public class SensorDataRepository {
         }
         return result;
     }
+
+    public synchronized List<SensorReading> findLastHours(int hours, int limit) {
+    long cutoff = System.currentTimeMillis() - (long) hours * 3600_000L;
+    String sql = "SELECT ts_millis, ts_text, temperature, humidity, co2, illumination " +
+            "FROM sensor_data WHERE ts_millis >= ? ORDER BY ts_millis ASC LIMIT ?";
+    List<SensorReading> result = new ArrayList<>();
+    try (PreparedStatement ps = connection.prepareStatement(sql)) {
+        ps.setLong(1, cutoff);
+        ps.setInt(2, limit);
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                result.add(new SensorReading(
+                        rs.getLong("ts_millis"),
+                        rs.getString("ts_text"),
+                        rs.getDouble("temperature"),
+                        rs.getDouble("humidity"),
+                        rs.getDouble("co2"),
+                        rs.getDouble("illumination")
+                ));
+            }
+        }
+    } catch (SQLException e) {
+        e.printStackTrace();
+    }
+    return result;
+}
+    
 }

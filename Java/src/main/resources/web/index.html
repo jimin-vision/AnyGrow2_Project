@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Anygrow2 센서 원격 조회</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .card { border: 1px solid #d0d0d0; border-radius: 8px; padding: 10px; background: #fff; }
+    .title { font-weight: 700; margin-bottom: 6px; }
+    canvas { width: 100% !important; height: 260px !important; }
+    .small { color:#666; font-size: 12px; }
+    input { padding: 6px; }
+    button { padding: 8px 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>Anygrow2 센서 원격 조회</h2>
+
+  <div class="row">
+    <div class="card">
+      <div class="title">조회 설정</div>
+      <div class="row">
+        <label>시간(시간): <input id="hours" type="number" min="1" max="168" value="24"></label>
+        <label>최대 개수: <input id="limit" type="number" min="1" max="20000" value="2000"></label>
+        <button onclick="reload()">불러오기</button>
+        <button onclick="toggleAuto()"><span id="autoTxt">자동 새로고침: OFF</span></button>
+      </div>
+      <div class="small">API: <code>/api/sensors?hours=24&limit=2000</code></div>
+      <div class="small" id="status">상태: 대기</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="title">온도(℃)</div>
+      <canvas id="cTemp"></canvas>
+    </div>
+    <div class="card">
+      <div class="title">습도(%)</div>
+      <canvas id="cHum"></canvas>
+    </div>
+    <div class="card">
+      <div class="title">CO₂(ppm)</div>
+      <canvas id="cCo2"></canvas>
+    </div>
+    <div class="card">
+      <div class="title">조도(lx)</div>
+      <canvas id="cIll"></canvas>
+    </div>
+  </div>
+
+<script>
+let charts = {};
+let auto = false;
+let timer = null;
+
+function makeChart(canvasId, label) {
+  const ctx = document.getElementById(canvasId);
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{ label, data: [], borderWidth: 2, pointRadius: 0, tension: 0.15 }] },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { display: false } }
+    }
+  });
+}
+
+charts.temp = makeChart('cTemp', '온도');
+charts.hum  = makeChart('cHum', '습도');
+charts.co2  = makeChart('cCo2', 'CO2');
+charts.ill  = makeChart('cIll', '조도');
+
+async function reload() {
+  const hours = document.getElementById('hours').value || 24;
+  const limit = document.getElementById('limit').value || 2000;
+
+  document.getElementById('status').textContent = '상태: 불러오는 중...';
+
+  try {
+    const res = await fetch(`/api/sensors?hours=${hours}&limit=${limit}`);
+    const json = await res.json();
+
+    const labels = json.data.map(r => r.tsText.slice(11,19)); // HH:MM:SS
+    const t = json.data.map(r => r.temperature);
+    const h = json.data.map(r => r.humidity);
+    const c = json.data.map(r => r.co2);
+    const l = json.data.map(r => r.illumination);
+
+    setData(charts.temp, labels, t);
+    setData(charts.hum,  labels, h);
+    setData(charts.co2,  labels, c);
+    setData(charts.ill,  labels, l);
+
+    document.getElementById('status').textContent =
+      `상태: 완료 (count=${json.count})`;
+  } catch (e) {
+    document.getElementById('status').textContent =
+      `상태: 실패 (${e})`;
+  }
+}
+
+function setData(chart, labels, data) {
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = data;
+  chart.update();
+}
+
+function toggleAuto() {
+  auto = !auto;
+  document.getElementById('autoTxt').textContent = `자동 새로고침: ${auto ? 'ON' : 'OFF'}`;
+  if (timer) clearInterval(timer);
+  if (auto) timer = setInterval(reload, 5000);
+}
+
+reload();
+</script>
+</body>
+</html>
