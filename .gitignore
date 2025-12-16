@@ -1,0 +1,76 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 가상환경
+venv/
+.venv/
+ENV/
+
+# =========================
+# 환경 변수 / 비밀 정보
+# =========================
+.env
+.env.*
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# 테스트 / 캐시 / 로그
+# =========================
+.pytest_cache/
+.mypy_cache/
+.cache/
+logs/
+*.log
+# Whisper / STT models & caches
+.whisper_models/
+**/.whisper_models/
+*.bin
+*.ggml
+*.gguf
+
+# HuggingFace cache (보통 홈에 생기지만, 혹시 프로젝트에 생기면)
+.hf_cache/
+**/.hf_cache/
+.cache/
+**/.cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# venv
+venv/
+.venv/
+
+# env
+.env
+.env.*
+
+# macOS
+.DS_Store
+# =========================
+# 빌드 결과물
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# 기타
+# =========================
+node_modules/
