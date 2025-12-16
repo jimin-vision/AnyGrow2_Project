@@ -5,22 +5,23 @@ from datetime import datetime
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from drivers.hardware import HardwareManager
 from ui.widgets.sensor_widget import SensorWidget
 from ui.widgets.raw_data_widget import RawDataWidget
 from ui.widgets.control_widget import ControlWidget
 from ui.widgets.interval_widget import IntervalWidget
 
 class AnyGrowMainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
+    def __init__(self, app_state, main_controller, hardware_manager):
         super().__init__()
+
+        self._app_state = app_state
+        self._main_controller = main_controller
+        self._hardware_manager = hardware_manager # app.py에서 인스턴스를 받으므로 직접 생성하지 않습니다.
 
         self.setWindowTitle("AnyGrow2 PyQt GUI (Refactored)")
         self.setFont(QtGui.QFont("Malgun Gothic", 9))
 
         self.interval_widgets = []
-        self.active_timers = []
-        self._last_valid_co2 = None
         self._last_data_timestamp = 0
 
         central = QtWidgets.QWidget()
@@ -35,7 +36,7 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.setFixedSize(int(self.sizeHint().width() * 1.05), int(self.sizeHint().height() * 0.95))
         
         self._connect_signals()
-        self._start_hardware_thread()
+        # _start_hardware_thread() 호출 제거
         self._start_ui_timers()
 
     def _setup_ui(self, root_layout):
@@ -116,36 +117,16 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         root_v_layout.addLayout(btn_layout)
         self._add_interval_row()
         
-    def _start_hardware_thread(self):
-        self.hw_thread = QtCore.QThread()
-        self.hw_manager = HardwareManager()
-        self.hw_manager.moveToThread(self.hw_thread)
-
-        # Connect signals from worker to GUI
-        self.hw_manager.status_changed.connect(self.set_serial_status)
-        self.hw_manager.data_updated.connect(self._on_data_updated)
-        self.hw_manager.raw_string_updated.connect(self.raw_data_widget.set_text)
-        self.hw_manager.request_sent.connect(self._increment_request_count)
-        # Manually trigger a reconnect attempt using a thread-safe call
-        self.btn_reconnect.clicked.connect(
-            lambda: QtCore.QMetaObject.invokeMethod(self.hw_manager, "reconnect", QtCore.Qt.QueuedConnection)
-        )
-
-        # Connect thread management signals
-        self.hw_thread.started.connect(self.hw_manager.start)
-        self.hw_thread.finished.connect(self.hw_manager.deleteLater)
-        
-        self.hw_thread.start()
-
     def _start_ui_timers(self):
         self.clock_timer = QtCore.QTimer(self)
         self.clock_timer.setInterval(1000)
         self.clock_timer.timeout.connect(self._update_clock)
         self.clock_timer.start()
 
+        # 데이터 수신 상태를 주기적으로 확인하기 위한 타이머
         self.sensor_status_timer = QtCore.QTimer(self)
         self.sensor_status_timer.setInterval(1000)
-        self.sensor_status_timer.timeout.connect(self._check_sensor_status)
+        self.sensor_status_timer.timeout.connect(self._check_sensor_data_age)
         self.sensor_status_timer.start()
         
     def _connect_signals(self):
@@ -154,10 +135,32 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.control_widget.pump_command.connect(self.send_pump_command)
         self.control_widget.uv_command.connect(self.send_uv_command)
         self.control_widget.bms_time_sync_command.connect(self.sync_bms_time)
+        
+        # HardwareManager의 status_changed 시그널을 직접 수신
+        self._hardware_manager.status_changed.connect(self.set_serial_status)
+        # raw_data_widget은 여전히 raw 데이터를 직접 수신
+        self._hardware_manager.raw_string_updated.connect(self.raw_data_widget.set_text)
+        self._hardware_manager.request_sent.connect(self._increment_request_count)
+
+        # 재연결 버튼 클릭 시 MainController를 통해 하드웨어 재연결 요청
+        self.btn_reconnect.clicked.connect(self._main_controller.reconnect_hardware)
+
+        # AppState의 데이터 변경 시그널을 UI 업데이트 슬롯에 연결
+        self._app_state.data_updated.connect(self._on_app_state_updated)
+        
+        # MainController의 스케줄링 상태 업데이트 시그널 연결
+        self._main_controller.schedule_status_updated.connect(self.set_serial_status)
+
 
     # ============================================================
     # UI Update Slots (connected to signals from HardwareManager)
     # ============================================================
+    @QtCore.pyqtSlot(dict)
+    def _on_app_state_updated(self, data: dict):
+        """센서 데이터가 업데이트될 때 UI를 새로고침하는 슬롯"""
+        self.sensor_widget.update_sensor_bars(data)
+        self._last_data_timestamp = time.time()
+
     @QtCore.pyqtSlot(str)
     def set_serial_status(self, text: str):
         self.lbl_serial_status.setText(text)
@@ -170,24 +173,8 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
             cnt = 1
         self.lbl_req_count.setText(str(cnt))
 
-    @QtCore.pyqtSlot(dict)
-    def _on_data_updated(self, data: dict):
-        self._last_data_timestamp = data.get('timestamp', 0)
-        t = data.get('temp')
-        h = data.get('humidity')
-        c = data.get('co2')
-        il = data.get('illum')
-
-        # CO2 sensor spike filtering
-        if c is not None and c >= 6000:
-            c = self._last_valid_co2 if self._last_valid_co2 is not None else 0
-        else:
-            self._last_valid_co2 = c
-
-        self.sensor_widget.update_sensor_bars(t, h, int(c or 0), int(il or 0))
-        self.sensor_widget.set_last_update_text(datetime.now().strftime("마지막 갱신: %H:%M:%S"))
-
-    def _check_sensor_status(self):
+    def _check_sensor_data_age(self):
+        """마지막 데이터 수신 시간으로부터 경과 시간을 확인하고 상태 라벨을 업데이트합니다."""
         if self._last_data_timestamp == 0:
             self.sensor_widget.set_sensor_status_text("센서 데이터 수신 기록 없음")
             return
@@ -202,98 +189,46 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         now_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
         self.lbl_current_time.setText(now_str)
         
-    # ============================================================
-    # Command Sending Slots (sends commands to HardwareManager)
-    # ============================================================
-    def _send_command_to_worker(self, cmd, *args):
-        # Use invokeMethod for thread-safe slot calling
-        arg_list = list(args)
-        QtCore.QMetaObject.invokeMethod(
-            self.hw_manager,
-            "submit_command",
-            QtCore.Qt.QueuedConnection,
-            QtCore.Q_ARG(str, cmd),
-            QtCore.Q_ARG(object, arg_list or None)
-        )
-
     @QtCore.pyqtSlot(str)
     def send_led_command(self, mode: str):
+        print(f"[UI 동작] LED 명령 전송: {mode}")
         self.set_serial_status(f"LED 명령 예약: {mode}")
-        self._send_command_to_worker('led', mode)
+        self._main_controller.send_command('led', {'mode': mode})
 
     @QtCore.pyqtSlot(bool)
     def send_pump_command(self, on: bool):
         status = 'On' if on else 'Off'
+        print(f"[UI 동작] 양액 펌프 명령 전송: {status}")
         self.set_serial_status(f"양액 펌프 명령 예약: {status}")
-        self._send_command_to_worker('pump', on)
+        self._main_controller.send_command('pump', {'on': on})
 
     @QtCore.pyqtSlot(bool)
     def send_uv_command(self, on: bool):
         status = 'On' if on else 'Off'
+        print(f"[UI 동작] UV 필터 명령 전송: {status}")
         self.set_serial_status(f"UV 필터 명령 예약: {status}")
-        self._send_command_to_worker('uv', on)
+        self._main_controller.send_command('uv', {'on': on})
 
     @QtCore.pyqtSlot(list)
     def apply_channel_led_from_gui(self, settings: list):
+        print(f"[UI 동작] 채널별 LED 설정 전송: {settings}")
         self.set_serial_status(f"채널별 LED 설정 명령 예약: {settings}")
-        # self._send_command_to_worker('channel_led', settings) # Not implemented yet
+        self._main_controller.send_command('channel_led', {'settings': settings})
 
     @QtCore.pyqtSlot()
     def sync_bms_time(self):
         now = datetime.now()
+        print(f"[UI 동작] BMS 시간 동기화 전송.")
         self.set_serial_status(f"BMS 시간 동기화 명령 예약: {now.hour:02d}:{now.minute:02d}:{now.second:02d}")
-        self._send_command_to_worker('bms_time_sync', now.hour, now.minute, now.second)
+        self._main_controller.send_command('bms_time_sync', {'hour': now.hour, 'minute': now.minute, 'second': now.second})
 
     def apply_all_schedules(self):
-        for timer in self.active_timers:
-            timer.stop()
-        self.active_timers.clear()
-        
-        self.set_serial_status("기존 예약을 모두 취소하고 새 예약을 적용합니다...")
-        current_time = QtCore.QTime.currentTime()
-        schedule_count = 0
-
-        for widget in self.interval_widgets:
-            settings = widget.get_values()
-            if not settings["start_time"].isValid(): continue
-            
-            start_time = settings["start_time"]
-            end_time = settings["end_time"]
-            is_on_at_start = (settings["action"] == "켜기 (ON)")
-            
-            # --- Schedule Start Action ---
-            msecs_until_start = current_time.msecsTo(start_time)
-            if msecs_until_start < 0: msecs_until_start += 24 * 60 * 60 * 1000
-            
-            start_timer = QtCore.QTimer(self)
-            start_timer.setSingleShot(True)
-            start_timer.timeout.connect(self._get_command_func(settings["target"], is_on_at_start))
-            start_timer.start(msecs_until_start)
-            self.active_timers.append(start_timer)
-            schedule_count += 1
-            
-            # --- Schedule End Action ---
-            msecs_until_end = current_time.msecsTo(end_time)
-            if msecs_until_end < 0: msecs_until_end += 24 * 60 * 60 * 1000
-            
-            end_timer = QtCore.QTimer(self)
-            end_timer.setSingleShot(True)
-            end_timer.timeout.connect(self._get_command_func(settings["target"], not is_on_at_start))
-            end_timer.start(msecs_until_end)
-            self.active_timers.append(end_timer)
-            schedule_count += 1
-        
-        self.set_serial_status(f"총 {schedule_count}개의 예약(켜기/끄기)을 설정했습니다.")
-
-    def _get_command_func(self, target: str, is_on: bool):
-        if target == "전체 LED":
-            mode = "Auto" if is_on else "Off"
-            return lambda: self.send_led_command(mode)
-        elif target == "양액 펌프":
-            return lambda: self.send_pump_command(is_on)
-        elif target == "UV 필터":
-            return lambda: self.send_uv_command(is_on)
-        return lambda: None
+        """
+        인터벌 위젯들로부터 스케줄 설정을 추출하여 컨트롤러에 전달합니다.
+        """
+        print("[UI 동작] 모든 스케줄 적용.")
+        schedule_settings = [widget.get_values() for widget in self.interval_widgets]
+        self._main_controller.apply_all_schedules(schedule_settings)
 
     # ============================================================
     # Interval Widget Management
@@ -317,9 +252,8 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
             widget.set_number(i + 1)
             
     def closeEvent(self, event):
-        self.hw_manager.stop()
-        self.hw_thread.quit()
-        self.hw_thread.wait(2000) # Wait up to 2s for thread to finish
+        # HardwareManager 스레드 정지 처리를 MainController로 위임
+        self._main_controller.stop_hardware()
         event.accept()
 
 def run_standalone():

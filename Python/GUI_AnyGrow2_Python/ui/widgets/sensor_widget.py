@@ -63,14 +63,20 @@ class SensorWidget(QtWidgets.QGroupBox):
         self.layout().addWidget(bar, r, 3) # Progress bar moved to column 3
         self._bars[key] = (value_lbl, trend_lbl, bar, max_v)
 
-    def update_sensor_bars(self, t: float, h: float, c: int, il: int):
-        data = {
+    def update_sensor_bars(self, data: dict):
+        # 센서 키와 값을 추출합니다.
+        t = data.get("temp", 0.0)
+        h = data.get("hum", 0.0)
+        c = data.get("co2", 0)
+        il = data.get("illum", 0)
+
+        sensor_data = {
             "temp": (t, MAX_TEMP, f"{t:.1f} ℃"),
             "hum": (h, MAX_HUM, f"{h:.1f} %"),
             "co2": (float(c), MAX_CO2, f"{c} ppm"),
             "illum": (float(il), MAX_ILLUM, f"{il} lx"),
         }
-        for key, (val, max_v, txt) in data.items():
+        for key, (val, max_v, txt) in sensor_data.items():
             value_lbl, trend_lbl, bar, _ = self._bars[key]
 
             ratio = max(0.0, min(1.0, float(val) / float(max_v)))
@@ -87,15 +93,15 @@ class SensorWidget(QtWidgets.QGroupBox):
             # Update trend indicator
             prev_val = self.previous_values.get(key)
             if prev_val is not None:
-                if val > prev_val:
+                diff = val - prev_val
+                # A small threshold to prevent flickering for tiny changes
+                if diff > 0.01:
                     trend_lbl.setText("▲")
                     trend_lbl.setStyleSheet("color: green;")
-                elif val < prev_val:
+                elif diff < -0.01:
                     trend_lbl.setText("▼")
                     trend_lbl.setStyleSheet("color: red;")
-                # else: # val == prev_val, do nothing to keep previous arrow
-                #    trend_lbl.setText("─")
-                #    trend_lbl.setStyleSheet("color: gray;")
+                # If the value is the same, do nothing to keep the last trend indicator
             
             self.previous_values[key] = val
     

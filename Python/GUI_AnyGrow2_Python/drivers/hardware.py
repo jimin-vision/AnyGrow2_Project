@@ -2,12 +2,14 @@
 import serial
 import time
 import queue
+import gc
 from datetime import datetime
 from PyQt5 import QtCore
 
 # ============================================================
-# Helper Functions & Packet Definitions
+# Helper Functions & Constants
 # ============================================================
+COMMAND_INTERVAL = 0.2 # 200ms between commands to prevent spamming
 
 def dec_to_bcd(n):
     return (n // 10) * 16 + (n % 10)
@@ -38,12 +40,12 @@ def _parse_sensor_packet(arr):
 
     return {
         "temp": t_raw / 10.0,
-        "humidity": h_raw / 10.0,
+        "hum": h_raw / 10.0,
         "co2": c_raw,
         "illum": i_raw
     }
 
-# Packet definitions remain the same
+# Packet definitions
 SENSOR_REQUEST_PACKET = bytes.fromhex("0202FF53FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
 LED_PACKETS = {
     "Off": bytes.fromhex("0201FF4CFF00FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"),
@@ -55,14 +57,12 @@ PUMP_OFF_PACKET = bytes.fromhex("0200FF59FF01FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 UV_ON_PACKET = bytes.fromhex("0200FF59FF02FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
 UV_OFF_PACKET = bytes.fromhex("0200FF59FF02FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
 
-
 # ============================================================
-# Hardware Manager Class (QObject for threading)
+# Hardware Manager Class
 # ============================================================
 
 class HardwareManager(QtCore.QObject):
     
-    # Signals to communicate with the GUI thread
     status_changed = QtCore.pyqtSignal(str)
     data_updated = QtCore.pyqtSignal(dict)
     raw_string_updated = QtCore.pyqtSignal(str)
@@ -76,149 +76,209 @@ class HardwareManager(QtCore.QObject):
         self._ser = None
         self._command_queue = queue.Queue()
         self._running = False
-        
-        # Timers must be instance variables to be kept alive
+        self._mutex = QtCore.QMutex()
+        self._is_connected = False
+        self._last_write_timestamp = 0
+
         self.command_timer = None
         self.sensor_request_timer = None
         self.read_timer = None
-
-    @QtCore.pyqtSlot()
-    def reconnect(self):
-        """Public slot to manually trigger a reconnection attempt."""
-        self._ensure_serial_connection()
+        self.reconnect_timer = None
 
     @QtCore.pyqtSlot()
     def start(self):
-        """Main worker loop for the hardware thread."""
+        if self._running: return
         self._running = True
         
-        # Timers for periodic tasks within this thread
         self.command_timer = QtCore.QTimer()
-        self.command_timer.timeout.connect(self._process_command_queue)
-        self.command_timer.start(100) # Process queue 10x per second
-
         self.sensor_request_timer = QtCore.QTimer()
-        self.sensor_request_timer.timeout.connect(lambda: self.submit_command('sensor_req'))
-        self.sensor_request_timer.start(1000) # Request sensor data every second
+        self.read_timer = QtCore.QTimer()
+        self.reconnect_timer = QtCore.QTimer()
 
-        # Initial connection attempt
-        self._ensure_serial_connection()
+        self.command_timer.timeout.connect(self._process_command_queue)
+        self.sensor_request_timer.timeout.connect(lambda: self.submit_command('sensor_req'))
+        self.read_timer.timeout.connect(self._read_data)
+        self.reconnect_timer.timeout.connect(self._connect)
+        self.reconnect_timer.setSingleShot(True)
+        
+        self.command_timer.start(50)
+        self.sensor_request_timer.start(500)
+
+        self._connect()
         
     @QtCore.pyqtSlot()
     def stop(self):
         self.status_changed.emit("Stopping hardware thread...")
         self._running = False
         
-        # Stop all timers
         if self.command_timer: self.command_timer.stop()
         if self.sensor_request_timer: self.sensor_request_timer.stop()
-        if self.read_timer: self.read_timer.stop()
-
-        if self._ser and self._ser.is_open:
-            try:
-                self._ser.close()
-            except Exception as e:
-                self.status_changed.emit(f"[ERROR] on close: {e}")
+        if self.reconnect_timer: self.reconnect_timer.stop()
+        
+        self._disconnect()
         self.status_changed.emit("Hardware thread stopped.")
 
-    def _ensure_serial_connection(self):
-        if self._ser and self._ser.is_open:
-            return True
+    @QtCore.pyqtSlot()
+    def reconnect(self):
+        self.status_changed.emit("Manual reconnect requested...")
+        print("[HARDWARE] Manual reconnect requested...")
         
-        # Stop any existing read timer before creating a new one
-        if self.read_timer:
-            self.read_timer.stop()
+        if self.reconnect_timer and self.reconnect_timer.isActive():
+            self.reconnect_timer.stop()
+            
+        self._disconnect()
+        QtCore.QTimer.singleShot(100, self._connect)
 
+    def _disconnect(self):
+        self._mutex.lock()
         try:
-            self.status_changed.emit(f"Attempting to connect to {self.serial_port_name}...")
+            if self.read_timer: self.read_timer.stop()
+            if self._ser:
+                if self._ser.is_open:
+                    self._ser.close()
+                del self._ser
+                self._ser = None
+                gc.collect()
+                if self._is_connected:
+                    msg = "Serial port disconnected."
+                    self.status_changed.emit(msg)
+                    print(f"[HARDWARE] {msg}")
+            self._is_connected = False
+        except Exception as e:
+            msg = f"[ERROR] on disconnect: {e}"
+            self.status_changed.emit(msg)
+            print(f"[HARDWARE] {msg}")
+        finally:
+            self._mutex.unlock()
+
+    def _connect(self):
+        self._mutex.lock()
+        try:
+            if not self._running or self._is_connected:
+                return
+
+            msg = f"Attempting to connect to {self.serial_port_name}..."
+            self.status_changed.emit(msg)
+            print(f"[HARDWARE] {msg}")
+            
             self._ser = serial.Serial(
                 port=self.serial_port_name,
                 baudrate=self.baud_rate,
-                timeout=0.1
+                timeout=0.1,
+                write_timeout=1.0
             )
-            self.status_changed.emit(f"Serial port {self.serial_port_name} connected.")
+            self._is_connected = True
             
-            # Start a timer to continuously read data
-            self.read_timer = QtCore.QTimer()
-            self.read_timer.timeout.connect(self._read_data)
-            self.read_timer.start(50)
-            return True
+            msg = f"Serial port {self.serial_port_name} connected."
+            self.status_changed.emit(msg)
+            print(f"[HARDWARE] {msg}")
+            
+            if self.read_timer: self.read_timer.start(50)
+
         except serial.SerialException as e:
-            self.status_changed.emit(f"[ERROR] Failed to connect: {e}")
-            self._ser = None
-            # Retry connection after a delay
-            QtCore.QTimer.singleShot(3000, self._ensure_serial_connection)
-            return False
+            self._is_connected = False
+            msg = f"[ERROR] Failed to connect: {e}"
+            self.status_changed.emit(msg)
+            print(f"[HARDWARE] {msg}")
+            if self._running and self.reconnect_timer:
+                self.reconnect_timer.start(3000)
+        finally:
+            self._mutex.unlock()
+
+    def _handle_serial_error(self, error_msg):
+        print(f"[HARDWARE] {error_msg}")
+        self.status_changed.emit(error_msg)
+        self._disconnect()
+        
+        if self._running and self.reconnect_timer and not self.reconnect_timer.isActive():
+            self.reconnect_timer.start(1000)
 
     def _read_data(self):
-        if not self._running or not self._ser or not self._ser.is_open:
-            return
-
+        if not self._is_connected: return
+        
+        self._mutex.lock()
         try:
+            if not self._ser or not self._ser.is_open: return
+
             if self._ser.in_waiting > 0:
                 data = self._ser.read(self._ser.in_waiting)
                 if data:
                     arr = _hex_list_from_bytes(data)
                     raw_string = ",".join(arr)
                     self.raw_string_updated.emit(raw_string)
-                    
                     reading = _parse_sensor_packet(arr)
                     if reading is not None:
                         reading['timestamp'] = time.time()
                         self.data_updated.emit(reading)
-
         except Exception as e:
-            self.status_changed.emit(f"[ERROR] Serial read error: {e}")
-            if self._ser:
-                self._ser.close()
-            self._ser = None
-            # Trigger reconnection logic
-            QtCore.QTimer.singleShot(1000, self._ensure_serial_connection)
+            self._handle_serial_error(f"[ERROR] Serial read error: {e}")
+        finally:
+            self._mutex.unlock()
 
     @QtCore.pyqtSlot(str, object)
     def submit_command(self, cmd: str, args=None):
-        if not self._running:
-            return
+        if not self._running: return
+        if args is None: args = {}
         self._command_queue.put((cmd, args))
 
     def _process_command_queue(self):
-        if not self._ser or not self._ser.is_open:
-            # Don't try to reconnect here, just wait. _ensure_serial_connection is handled by other parts.
+        now = time.time()
+        if now - self._last_write_timestamp < COMMAND_INTERVAL:
+            return
+            
+        if self._command_queue.empty():
             return
 
         try:
             cmd, args = self._command_queue.get_nowait()
         except queue.Empty:
-            return # No command to process
+            return
 
         packet_to_send = None
-        # Logic to build packet based on command
-        if cmd == 'led' and args:
-            packet_to_send = LED_PACKETS.get(args[0])
-        elif cmd == 'pump' and args is not None:
-            packet_to_send = PUMP_ON_PACKET if args[0] else PUMP_OFF_PACKET
-        elif cmd == 'uv' and args is not None:
-            packet_to_send = UV_ON_PACKET if args[0] else UV_OFF_PACKET
-        elif cmd == 'sensor_req':
+        if cmd == 'sensor_req':
             packet_to_send = SENSOR_REQUEST_PACKET
-            self.request_sent.emit()
+        elif cmd == 'led' and args:
+            packet_to_send = LED_PACKETS.get(args.get('mode'))
+        elif cmd == 'pump' and 'on' in args:
+            packet_to_send = PUMP_ON_PACKET if args.get('on') else PUMP_OFF_PACKET
+        elif cmd == 'uv' and 'on' in args:
+            packet_to_send = UV_ON_PACKET if args.get('on') else UV_OFF_PACKET
         elif cmd == 'bms_time_sync' and args:
-            hour_bcd = dec_to_bcd(args[0])
-            minute_bcd = dec_to_bcd(args[1])
-            second_bcd = dec_to_bcd(args[2])
+            hour_bcd = dec_to_bcd(args.get('hour', 0))
+            minute_bcd = dec_to_bcd(args.get('minute', 0))
+            second_bcd = dec_to_bcd(args.get('second', 0))
             packet_str = f"0202FF54FF00FF{hour_bcd:02x}{minute_bcd:02x}{second_bcd:02x}FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
             packet_to_send = bytes.fromhex(packet_str)
-        # Add other command handling here...
-        
+        elif cmd == 'channel_led' and 'settings' in args:
+            settings = args.get('settings', [])
+            if len(settings) == 4:
+                payload = ""
+                for setting in settings:
+                    on = 0x01 if setting.get('on') else 0x00
+                    hz = setting.get('hz', 1)
+                    brightness = setting.get('brightness', 0)
+                    hz_hi = (hz >> 8) & 0xFF
+                    hz_lo = hz & 0xFF
+                    payload += f"{on:02x}{hz_hi:02x}{hz_lo:02x}{brightness:02x}"
+                padding_len = 30 - 7 - (len(payload)//2) - 1
+                packet_str = f"0201FF4DFF00FF{payload}{'FF'*padding_len}03"
+                if len(packet_str) == 60:
+                    packet_to_send = bytes.fromhex(packet_str)
+                else:
+                    self.status_changed.emit("[ERROR] Channel LED packet length is incorrect.")
+
         if packet_to_send:
+            self._mutex.lock()
             try:
+                if not self._is_connected or not self._ser or not self._ser.is_open:
+                    # If disconnected between check and write, re-queue and let next cycle handle it.
+                    self.submit_command(cmd, args)
+                    return
                 self._ser.write(packet_to_send)
+                self._last_write_timestamp = time.time()
+                if cmd == 'sensor_req':
+                    self.request_sent.emit()
             except Exception as e:
-                self.status_changed.emit(f"[ERROR] Serial write error: {e}")
-                if self._ser:
-                    self._ser.close()
-                self._ser = None
-                # Re-queue the failed command
-                self.submit_command(cmd, args)
-                # Trigger reconnection logic by calling ensure_serial_connection
-                QtCore.QTimer.singleShot(1000, self._ensure_serial_connection)
+                self._handle_serial_error(f"[ERROR] Serial write error: {e}")
+            finally:
+                self._mutex.unlock()
