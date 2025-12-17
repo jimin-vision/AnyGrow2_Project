@@ -139,7 +139,7 @@ public class Anygrow2FxApp extends Application {
         // =========================
         // Scene/Stage
         // =========================
-        Scene scene = new Scene(root, 1200, 720);
+        Scene scene = new Scene(root, 1200, 900);
         stage.setTitle("Anygrow2 JavaFX 클라이언트 (" + serverUri + ")");
         stage.setScene(scene);
         stage.show();

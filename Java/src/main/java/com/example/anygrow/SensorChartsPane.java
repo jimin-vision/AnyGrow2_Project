@@ -12,10 +12,20 @@ import javafx.scene.text.Font;
 
 public class SensorChartsPane extends GridPane {
 
+    // ====== 슬라이딩 윈도우 설정 ======
+    // 화면에 유지할 포인트 개수 (기존 trim의 max와 동일하게 맞추는 게 좋음)
+    private static final int WINDOW_SIZE = 200;
+
     private final XYChart.Series<Number, Number> tempSeries = new XYChart.Series<>();
     private final XYChart.Series<Number, Number> humSeries  = new XYChart.Series<>();
     private final XYChart.Series<Number, Number> co2Series  = new XYChart.Series<>();
     private final XYChart.Series<Number, Number> illSeries  = new XYChart.Series<>();
+
+    // 각 차트의 X축을 잡아두고, addPoint 때마다 범위를 이동시킴
+    private final NumberAxis tempXAxis = new NumberAxis();
+    private final NumberAxis humXAxis  = new NumberAxis();
+    private final NumberAxis co2XAxis  = new NumberAxis();
+    private final NumberAxis illXAxis  = new NumberAxis();
 
     private int sampleIndex = 0;
 
@@ -24,15 +34,24 @@ public class SensorChartsPane extends GridPane {
         setVgap(10);
         setPadding(new Insets(6));
 
+        // 각 X축 공통 설정 (슬라이딩 윈도우용)
+        configureSlidingXAxis(tempXAxis, "시간 흐름");
+        configureSlidingXAxis(humXAxis,  "시간 흐름");
+        configureSlidingXAxis(co2XAxis,  "시간 흐름");
+        configureSlidingXAxis(illXAxis,  "시간 흐름");
+
         // 각 센서별 차트 생성
         LineChart<Number, Number> tempChart =
-                createChart("시간 흐름", "온도 (℃)", 0, 50, 10, tempSeries);
+                createChart(tempXAxis, "온도 (℃)", 0, 50, 10, tempSeries);
+
         LineChart<Number, Number> humChart =
-                createChart("시간 흐름", "습도 (%)", 0, 100, 20, humSeries);
+                createChart(humXAxis, "습도 (%)", 0, 100, 20, humSeries);
+
         LineChart<Number, Number> co2Chart =
-                createChart("시간 흐름", "CO₂ (ppm)", 0, 6000, 1000, co2Series);
+                createChart(co2XAxis, "CO₂ (ppm)", 0, 6000, 1000, co2Series);
+
         LineChart<Number, Number> illChart =
-                createChart("시간 흐름", "조도 (lx)", 0, 2000, 500, illSeries);
+                createChart(illXAxis, "조도 (lx)", 0, 6000, 1000, illSeries);
 
         // 2x2 배치 + 테두리 타이틀
         add(wrapWithBorderTitle("온도 그래프", tempChart), 0, 0);
@@ -45,12 +64,24 @@ public class SensorChartsPane extends GridPane {
             GridPane.setHgrow(n, Priority.ALWAYS);
             GridPane.setVgrow(n, Priority.ALWAYS);
         }
+
+        // 초기 X축 범위(빈 차트여도 형태 유지)
+        updateAllXAxes(0);
     }
 
     /**
      * 센서 데이터 1회 갱신 시 호출
+     * (어떤 스레드에서 호출되더라도 안전하게 UI 스레드에서 처리)
      */
     public void addPoint(double temp, double hum, double co2, double ill) {
+        if (Platform.isFxApplicationThread()) {
+            addPointOnFxThread(temp, hum, co2, ill);
+        } else {
+            Platform.runLater(() -> addPointOnFxThread(temp, hum, co2, ill));
+        }
+    }
+
+    private void addPointOnFxThread(double temp, double hum, double co2, double ill) {
         int x = sampleIndex++;
 
         tempSeries.getData().add(new XYChart.Data<>(x, temp));
@@ -58,32 +89,69 @@ public class SensorChartsPane extends GridPane {
         co2Series.getData().add(new XYChart.Data<>(x, co2));
         illSeries.getData().add(new XYChart.Data<>(x, ill));
 
-        trim(tempSeries, 200);
-        trim(humSeries, 200);
-        trim(co2Series, 200);
-        trim(illSeries, 200);
+        // 데이터 개수 제한(윈도우 크기와 동일하게 유지)
+        trim(tempSeries, WINDOW_SIZE);
+        trim(humSeries,  WINDOW_SIZE);
+        trim(co2Series,  WINDOW_SIZE);
+        trim(illSeries,  WINDOW_SIZE);
+
+        // ★ 슬라이딩 윈도우: X축 범위를 최근 WINDOW_SIZE 구간으로 이동
+        updateAllXAxes(x);
     }
 
     // -----------------------------
     // 내부 유틸
     // -----------------------------
     private void trim(XYChart.Series<Number, Number> s, int max) {
-        if (s.getData().size() > max) {
-            s.getData().remove(0, s.getData().size() - max);
+        int size = s.getData().size();
+        if (size > max) {
+            s.getData().remove(0, size - max);
         }
     }
 
+    private void configureSlidingXAxis(NumberAxis xAxis, String label) {
+        xAxis.setLabel(label);
+
+        // 중요: 0을 강제로 포함시키면, 시간이 지날수록 0부터 시작하는 축이 유지되어
+        // 선이 오른쪽으로 몰려 "짧아지는" 현상이 생김
+        xAxis.setForceZeroInRange(false);
+
+        // 슬라이딩 윈도우는 우리가 bound를 직접 조절
+        xAxis.setAutoRanging(false);
+
+        // 보기 좋은 눈금
+        xAxis.setTickUnit(Math.max(1, WINDOW_SIZE / 10.0));
+        xAxis.setMinorTickCount(4);
+
+        // 초기에 대략적인 범위 부여
+        xAxis.setLowerBound(0);
+        xAxis.setUpperBound(Math.max(10, WINDOW_SIZE));
+    }
+
+    private void updateAllXAxes(int currentX) {
+        updateSlidingXAxis(tempXAxis, currentX);
+        updateSlidingXAxis(humXAxis,  currentX);
+        updateSlidingXAxis(co2XAxis,  currentX);
+        updateSlidingXAxis(illXAxis,  currentX);
+    }
+
+    private void updateSlidingXAxis(NumberAxis xAxis, int currentX) {
+        int upper = Math.max(currentX, WINDOW_SIZE);
+        int lower = Math.max(0, upper - WINDOW_SIZE);
+
+        xAxis.setLowerBound(lower);
+        xAxis.setUpperBound(upper);
+        xAxis.setTickUnit(Math.max(1, WINDOW_SIZE / 10.0));
+    }
+
     private LineChart<Number, Number> createChart(
-            String xLabel,
+            NumberAxis xAxis,
             String yLabel,
             double minY,
             double maxY,
             double tickY,
             XYChart.Series<Number, Number> series
     ) {
-        NumberAxis xAxis = new NumberAxis();
-        xAxis.setLabel(xLabel);
-
         NumberAxis yAxis = new NumberAxis(minY, maxY, tickY);
         yAxis.setLabel(yLabel);
 
