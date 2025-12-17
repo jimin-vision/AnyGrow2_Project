@@ -8,7 +8,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from ui.widgets.sensor_widget import SensorWidget
 from ui.widgets.raw_data_widget import RawDataWidget
 from ui.widgets.control_widget import ControlWidget
-from ui.widgets.interval_widget import IntervalWidget
+# --- MODIFIED IMPORT ---
+from ui.widgets.schedule_widget import ScheduleWidget
 
 class AnyGrowMainWindow(QtWidgets.QMainWindow):
     def __init__(self, app_state, main_controller, hardware_manager):
@@ -21,7 +22,6 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("AnyGrow2 PyQt GUI (Refactored)")
         self.setFont(QtGui.QFont("Malgun Gothic", 9))
 
-        self.interval_widgets = []
         self._last_data_timestamp = 0
 
         central = QtWidgets.QWidget()
@@ -33,10 +33,10 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
 
         self._setup_ui(root_layout)
         
-        self.setFixedSize(int(self.sizeHint().width() * 1.05), int(self.sizeHint().height() * 0.95))
+        # --- MODIFIED WIDTH ---
+        self.setFixedSize(int(self.sizeHint().width() * 1.1), int(self.sizeHint().height() * 1.0))
         
         self._connect_signals()
-        # _start_hardware_thread() 호출 제거
         self._start_ui_timers()
 
     def _setup_ui(self, root_layout):
@@ -92,30 +92,19 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         top_bar.addWidget(self.lbl_serial_status, 1)
         top_bar.addWidget(self.lbl_current_time)
 
+    # --- MODIFIED METHOD ---
     def _setup_timer_controls(self):
-        self.gb_timer = QtWidgets.QGroupBox("구간별 동작 설정")
+        self.gb_timer = QtWidgets.QGroupBox("예약 설정") # GroupBox 이름 변경
         root_v_layout = QtWidgets.QVBoxLayout(self.gb_timer)
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_widget = QtWidgets.QWidget()
-        self.intervals_layout = QtWidgets.QVBoxLayout(scroll_widget)
-        self.intervals_layout.setSpacing(4)
-        self.intervals_layout.addStretch(1)
-        scroll_area.setWidget(scroll_widget)
-        scroll_area.setMinimumHeight(200)
 
-        btn_layout = QtWidgets.QHBoxLayout()
-        btn_add = QtWidgets.QPushButton("✚ 구간 추가")
-        btn_add.clicked.connect(self._add_interval_row)
-        btn_apply = QtWidgets.QPushButton("💾 모든 예약 적용")
-        btn_apply.clicked.connect(self.apply_all_schedules)
-        btn_layout.addWidget(btn_add)
-        btn_layout.addStretch(1)
-        btn_layout.addWidget(btn_apply)
-
-        root_v_layout.addWidget(scroll_area)
-        root_v_layout.addLayout(btn_layout)
-        self._add_interval_row()
+        self.schedule_widget = ScheduleWidget()
+        
+        # --- REMOVED APPLY BUTTON ---
+        # btn_apply = QtWidgets.QPushButton("💾 모든 예약 적용")
+        # btn_apply.clicked.connect(self.apply_all_schedules)
+        
+        root_v_layout.addWidget(self.schedule_widget)
+        # root_v_layout.addWidget(btn_apply)
         
     def _start_ui_timers(self):
         self.clock_timer = QtCore.QTimer(self)
@@ -123,33 +112,33 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.clock_timer.timeout.connect(self._update_clock)
         self.clock_timer.start()
 
-        # 데이터 수신 상태를 주기적으로 확인하기 위한 타이머
         self.sensor_status_timer = QtCore.QTimer(self)
         self.sensor_status_timer.setInterval(1000)
         self.sensor_status_timer.timeout.connect(self._check_sensor_data_age)
         self.sensor_status_timer.start()
         
     def _connect_signals(self):
+        # Control widget signals
         self.control_widget.led_command.connect(self.send_led_command)
         self.control_widget.channel_led_command.connect(self.apply_channel_led_from_gui)
         self.control_widget.pump_command.connect(self.send_pump_command)
         self.control_widget.uv_command.connect(self.send_uv_command)
         self.control_widget.bms_time_sync_command.connect(self.sync_bms_time)
         
-        # HardwareManager의 status_changed 시그널을 직접 수신
+        # Hardware manager signals
         self._hardware_manager.status_changed.connect(self.set_serial_status)
-        # raw_data_widget은 여전히 raw 데이터를 직접 수신
         self._hardware_manager.raw_string_updated.connect(self.raw_data_widget.set_text)
         self._hardware_manager.request_sent.connect(self._increment_request_count)
 
-        # 재연결 버튼 클릭 시 MainController를 통해 하드웨어 재연결 요청
+        # Main window and controller signals
         self.btn_reconnect.clicked.connect(self._main_controller.reconnect_hardware)
-
-        # AppState의 데이터 변경 시그널을 UI 업데이트 슬롯에 연결
         self._app_state.data_updated.connect(self._on_app_state_updated)
-        
-        # MainController의 스케줄링 상태 업데이트 시그널 연결
         self._main_controller.schedule_status_updated.connect(self.set_serial_status)
+
+        # --- NEW: Schedule System Connections ---
+        self.schedule_widget.schedules_updated.connect(self._main_controller.update_schedules)
+        self._main_controller.schedules_loaded.connect(self.schedule_widget.load_schedules)
+
 
 
     # ============================================================
@@ -215,52 +204,38 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.set_serial_status(f"채널별 LED 설정 명령 예약: {settings}")
         self._main_controller.send_command('channel_led', {'settings': settings})
 
-    @QtCore.pyqtSlot()
-    def sync_bms_time(self):
-        now = datetime.now()
+    @QtCore.pyqtSlot(dict)
+    def sync_bms_time(self, time_data: dict):
         print(f"[UI 동작] BMS 시간 동기화 전송.")
-        self.set_serial_status(f"BMS 시간 동기화 명령 예약: {now.hour:02d}:{now.minute:02d}:{now.second:02d}")
-        self._main_controller.send_command('bms_time_sync', {'hour': now.hour, 'minute': now.minute, 'second': now.second})
+        self.set_serial_status(f"BMS 시간 동기화 명령 예약: {time_data['hour']:02d}:{time_data['minute']:02d}:{time_data['second']:02d}")
+        self._main_controller.send_command('bms_time_sync', time_data)
 
     def apply_all_schedules(self):
         """
-        인터벌 위젯들로부터 스케줄 설정을 추출하여 컨트롤러에 전달합니다.
+        새로운 스케줄 위젯으로부터 모든 스케줄 설정을 추출하여 컨트롤러에 전달합니다.
         """
         print("[UI 동작] 모든 스케줄 적용.")
-        schedule_settings = [widget.get_values() for widget in self.interval_widgets]
-        self._main_controller.apply_all_schedules(schedule_settings)
+        schedule_settings = self.schedule_widget.get_all_schedules()
+        # self._main_controller.apply_all_schedules(schedule_settings) # 기능 구현 시 주석 해제
+        print(f"적용될 스케줄: {schedule_settings}")
+
 
     # ============================================================
-    # Interval Widget Management
+    # Interval Widget Management (REMOVED)
     # ============================================================
-    def _add_interval_row(self):
-        new_interval = IntervalWidget()
-        new_interval.remove_requested.connect(lambda: self._remove_interval_row(new_interval))
-        self.intervals_layout.insertWidget(self.intervals_layout.count() - 1, new_interval)
-        self.interval_widgets.append(new_interval)
-        self._update_interval_numbers()
-
-    def _remove_interval_row(self, widget_to_remove):
-        if widget_to_remove in self.interval_widgets:
-            self.interval_widgets.remove(widget_to_remove)
-            self.intervals_layout.removeWidget(widget_to_remove)
-            widget_to_remove.deleteLater()
-            self._update_interval_numbers()
-
-    def _update_interval_numbers(self):
-        for i, widget in enumerate(self.interval_widgets):
-            widget.set_number(i + 1)
             
     def closeEvent(self, event):
-        # HardwareManager 스레드 정지 처리를 MainController로 위임
         self._main_controller.stop_hardware()
         event.accept()
 
 def run_standalone():
     app = QtWidgets.QApplication(sys.argv)
-    win = AnyGrowMainWindow()
-    win.show()
-    sys.exit(app.exec_())
+    # Standalone 실행을 위해서는 app_state, main_controller, hardware_manager 목업(mockup) 필요
+    # 현재 구조에서는 직접 실행이 어려움. app.py를 통해 실행해야 함.
+    print("This window cannot be run standalone. Run app.py.")
+    # win = AnyGrowMainWindow()
+    # win.show()
+    # sys.exit(app.exec_())
 
 if __name__ == "__main__":
     run_standalone()

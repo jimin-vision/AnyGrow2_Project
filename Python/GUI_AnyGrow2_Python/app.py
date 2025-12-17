@@ -7,6 +7,7 @@ from core.main_controller import MainController
 from drivers.hardware import HardwareManager
 
 def main():
+    print("--- app.py main called ---")
     app = QtWidgets.QApplication(sys.argv)
     
     app_state = AppState()
