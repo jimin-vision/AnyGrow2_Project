@@ -1,51 +1,69 @@
+# core/main_controller.py
 from PyQt5.QtCore import QObject, pyqtSignal, QTime, QTimer
 from datetime import datetime
-import json
-import os
-import copy
+
+from core.scheduler import Scheduler
 
 class MainController(QObject):
     """
-    애플리케이션의 핵심 비즈니스 로직을 관리하는 컨트롤러 클래스입니다.
+    MainController는 애플리케이션의 중앙 허브입니다.
+    UI, 하드웨어 관리자, 애플리케이션 상태를 연결합니다.
+    주요 책임은 다음과 같습니다:
+    - UI로부터의 사용자 명령을 하드웨어로 전달합니다.
+    - 하드웨어로부터의 센서 데이터를 처리하고 애플리케이션 상태를 업데이트합니다.
+    - 하드웨어 통신 스레드의 생명주기를 관리합니다.
+    - 스케줄러를 조정합니다.
     """
-    command_to_hardware = pyqtSignal(str, dict)
-    schedule_status_updated = pyqtSignal(str)
     reconnect_signal = pyqtSignal()
-    schedules_loaded = pyqtSignal(dict)
 
-    def __init__(self, hardware_manager, hardware_thread, app_state, parent=None):
-        print("--- MainController __init__ called ---")
+    def __init__(self, hardware_manager, hardware_thread, app_state, scheduler, parent=None):
+        """
+        MainController를 초기화합니다.
+        
+        Args:
+            hardware_manager (HardwareManager): 하드웨어 통신을 관리하는 객체입니다.
+            hardware_thread (QThread): 하드웨어 관리자가 실행되는 스레드입니다.
+            app_state (AppState): 애플리케이션의 상태를 저장하는 객체입니다.
+            scheduler (Scheduler): 예약된 작업을 실행하는 스케줄러입니다.
+            parent (QObject): 부모 QObject입니다.
+        """
         super().__init__(parent)
+        print("--- MainController 초기화 ---")
         self._hardware_manager = hardware_manager
         self._hardware_thread = hardware_thread
         self._app_state = app_state
-        
-        self.schedules = {}
-        self.schedule_file = "schedules.json"
-        self._load_schedules_from_file()
+        self._scheduler = scheduler
 
-        # --- Corrected Scheduler Engine ---
-        self.last_checked_minute = -1
-        self.scheduler_timer = QTimer(self)
-        self.scheduler_timer.timeout.connect(self._check_schedules)
-        self.scheduler_timer.start(1000) # Tick every second
+        self._connect_signals()
         
+    def _connect_signals(self):
+        """컴포넌트 간의 시그널과 슬롯을 연결합니다."""
         self._hardware_manager.data_updated.connect(self._process_sensor_data)
         self._hardware_thread.started.connect(self._hardware_manager.start)
         self.reconnect_signal.connect(self._hardware_manager.reconnect)
-        
+        self._scheduler.job_to_execute.connect(self._execute_job)
+
     def stop_hardware(self):
-        print("MainController stopping hardware thread...")
+        """하드웨어 통신 스레드를 안전하게 중지합니다."""
+        print("MainController가 하드웨어 스레드를 중지합니다...")
         self._hardware_manager.stop()
         self._hardware_thread.quit()
         self._hardware_thread.wait(2000)
-        print("MainController hardware thread stopped.")
+        print("MainController가 하드웨어 스레드를 중지했습니다.")
         
     def _process_sensor_data(self, data: dict):
+        """
+        하드웨어로부터 들어오는 센서 데이터를 처리합니다.
+        CO2 데이터에 필터를 적용하고 앱 상태를 업데이트합니다.
+        """
         processed_data = self._apply_co2_filter(data)
         self._app_state.update_sensor_data(processed_data)
         
     def _apply_co2_filter(self, data: dict) -> dict:
+        """
+        CO2 센서 값을 부드럽게 만들기 위한 간단한 필터입니다.
+        새로운 CO2 값이 이전 값과 크게 다르면 센서 오류일 가능성이 높으므로 이전 값을 사용합니다.
+        """
         if 'co2' in data:
             current_co2 = data['co2']
             previous_co2 = self._app_state.co2
@@ -54,67 +72,35 @@ class MainController(QObject):
         return data
 
     def send_command(self, command_type: str, params: dict = None):
+        """
+        하드웨어 관리자에게 명령을 보냅니다.
+        
+        Args:
+            command_type (str): 보낼 명령의 유형 (예: 'led', 'pump').
+            params (dict): 명령에 대한 매개변수 사전.
+        """
         if params is None:
             params = {}
         self._hardware_manager.submit_command(command_type, params)
         
     def reconnect_hardware(self):
-        print("MainController requesting hardware reconnect...")
+        """하드웨어 재연결을 요청하는 시그널을 보냅니다."""
+        print("MainController가 하드웨어 재연결을 요청합니다...")
         self.reconnect_signal.emit()
 
-    # ============================================================
-    # NEW SCHEDULING LOGIC
-    # ============================================================
-
-    def update_schedules(self, schedules_data: dict):
-        """UI로부터 스케줄 데이터가 업데이트되면 호출됩니다."""
-        self.schedules = schedules_data
-        self._save_schedules_to_file()
-        self.schedule_status_updated.emit("예약이 업데이트 및 저장되었습니다.")
-
-    def _check_schedules(self):
-        """1초마다 호출되어 현재 시간에 실행해야 할 작업이 있는지 확인합니다."""
-        now = datetime.now()
-        current_minute = now.minute
-        
-        if current_minute == self.last_checked_minute:
-            return
-        self.last_checked_minute = current_minute
-        
-        current_time_str = now.strftime("%H:%M")
-        
-        weekdays_map = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
-        current_weekday = weekdays_map[now.weekday()]
-        current_date_str = now.strftime("%Y-%m-%d")
-
-        jobs_to_run = []
-        
-        # '오늘' 스케줄이 있는지 확인하고, 있으면 그것을 우선 사용
-        daily_jobs = self.schedules.get("daily", {}).get(current_date_str)
-        if daily_jobs:
-            for job in daily_jobs:
-                if job.get("time").toString("HH:mm") == current_time_str:
-                    jobs_to_run.append(job)
-        # '오늘' 스케줄이 없으면, '요일별' 스케줄을 확인
-        else:
-            weekly_jobs = self.schedules.get("weekly", {}).get(current_weekday)
-            if weekly_jobs:
-                for job in weekly_jobs:
-                    if job.get("time").toString("HH:mm") == current_time_str:
-                        jobs_to_run.append(job)
-        
-        if jobs_to_run:
-            print(f"Executing {len(jobs_to_run)} jobs for {current_time_str}")
-            for job in jobs_to_run:
-                self._execute_job(job)
-
     def _execute_job(self, job: dict):
+        """
+        스케줄러로부터 작업을 받아 하드웨어에 적절한 명령을 보내 실행합니다.
+        
+        Args:
+            job (dict): 실행할 작업을 나타내는 사전.
+        """
         target = job.get("target")
         action = job.get("action")
         is_on = (action == "켜기 (ON)")
 
-        print(f"  - Job: {target} -> {action}")
-        self.schedule_status_updated.emit(f"실행: {job.get('name', '이름없는 예약')}")
+        print(f"  - 작업: {target} -> {action}")
+        self._scheduler.schedule_status_updated.emit(f"실행 중: {job.get('name', '이름 없는 작업')}")
 
         if target == "전체 LED":
             mode = "On" if is_on else "Off"
@@ -124,47 +110,6 @@ class MainController(QObject):
         elif target == "UV 필터":
             self.send_command('uv', {'on': is_on})
         else:
-            print(f"    - Unknown job target: {target}")
+            print(f"    - 알 수 없는 작업 대상: {target}")
 
-    def _save_schedules_to_file(self):
-        """현재 스케줄을 JSON 파일에 저장합니다. QTime 객체를 문자열로 변환합니다."""
-        schedules_to_save = copy.deepcopy(self.schedules)
-        for category in schedules_to_save.values():
-            for day_list in category.values():
-                for job in day_list:
-                    if isinstance(job.get("time"), QTime):
-                        job["time"] = job["time"].toString("HH:mm")
-        try:
-            with open(self.schedule_file, 'w', encoding='utf-8') as f:
-                json.dump(schedules_to_save, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"Error saving schedules: {e}")
-
-    def _load_schedules_from_file(self):
-        """JSON 파일에서 스케줄을 불러옵니다. 시간 문자열을 QTime 객체로 변환합니다."""
-        if not os.path.exists(self.schedule_file):
-            print("Schedule file not found. Starting with empty schedules.")
-            self.schedules = {
-                "weekly": {day: [] for day in ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]},
-                "daily": {}
-            }
-        else:
-            try:
-                with open(self.schedule_file, 'r', encoding='utf-8') as f:
-                    loaded_schedules = json.load(f)
-                
-                for category in loaded_schedules.values():
-                    for day_list in category.values():
-                        for job in day_list:
-                            if isinstance(job.get("time"), str):
-                                job["time"] = QTime.fromString(job["time"], "HH:mm")
-                
-                self.schedules = loaded_schedules
-                print("Schedules loaded and parsed successfully.")
-            except Exception as e:
-                print(f"Error loading schedules: {e}")
-                self.schedules = {}
-        
-        # Emit signal AFTER loading and parsing
-        self.schedules_loaded.emit(self.schedules)
 			

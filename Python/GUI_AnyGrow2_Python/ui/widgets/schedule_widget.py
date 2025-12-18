@@ -4,6 +4,7 @@ from datetime import datetime
 import copy
 from .schedule_row_widget import ScheduleRowWidget
 from .paste_template_dialog import PasteTemplateDialog
+from core.constants import WEEKDAYS_MAP
 
 class ScheduleWidget(QtWidgets.QFrame):
     """
@@ -16,7 +17,7 @@ class ScheduleWidget(QtWidgets.QFrame):
         super().__init__(parent)
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         
-        self.weekdays_map = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+        self.weekdays_map = WEEKDAYS_MAP
         
         self.schedules = {
             "weekly": {day: [] for day in self.weekdays_map},
@@ -43,8 +44,11 @@ class ScheduleWidget(QtWidgets.QFrame):
         
         self.rb_mode_weekly = QtWidgets.QRadioButton("요일별")
         self.rb_mode_today = QtWidgets.QRadioButton("오늘")
+        self.rb_mode_disabled = QtWidgets.QRadioButton("사용안함")
         self.rb_mode_weekly.setChecked(True)
         self.rb_mode_weekly.toggled.connect(self._on_mode_changed)
+        self.rb_mode_today.toggled.connect(self._on_mode_changed)
+        self.rb_mode_disabled.toggled.connect(self._on_mode_changed)
 
         self.date_time_stack = QtWidgets.QStackedWidget()
         self.lbl_today_date = QtWidgets.QLabel(f"<b>{self.today_date_str}</b>")
@@ -75,6 +79,7 @@ class ScheduleWidget(QtWidgets.QFrame):
         
         controls_layout.addWidget(self.rb_mode_weekly)
         controls_layout.addWidget(self.rb_mode_today)
+        controls_layout.addWidget(self.rb_mode_disabled)
         controls_layout.addStretch(1)
         controls_layout.addWidget(self.date_time_stack)
         controls_layout.addWidget(self.btn_copy)
@@ -85,17 +90,25 @@ class ScheduleWidget(QtWidgets.QFrame):
         layout.addLayout(controls_layout)
 
     def _setup_schedule_list(self, layout):
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setMinimumHeight(250)
+        self.scroll_area = QtWidgets.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumHeight(250)
         scroll_widget = QtWidgets.QWidget()
         
         self.schedule_list_layout = QtWidgets.QVBoxLayout(scroll_widget)
         self.schedule_list_layout.setSpacing(4)
         self.schedule_list_layout.addStretch(1)
         
-        scroll_area.setWidget(scroll_widget)
-        layout.addWidget(scroll_area)
+        self.scroll_area.setWidget(scroll_widget)
+        layout.addWidget(self.scroll_area)
+
+    def _set_schedule_controls_enabled(self, enabled):
+        self.scroll_area.setEnabled(enabled)
+        self.btn_copy.setEnabled(enabled)
+        self.btn_paste.setEnabled(enabled)
+        self.btn_add.setEnabled(enabled)
+        self.btn_delete_cancel.setEnabled(enabled)
+        self.date_time_stack.setEnabled(enabled)
 
     def _copy_schedule(self):
         if not self._current_schedule_list:
@@ -169,15 +182,38 @@ class ScheduleWidget(QtWidgets.QFrame):
         self.schedules_updated.emit(self.schedules)
 
     def _on_mode_changed(self, checked):
-        if self.rb_mode_weekly.isChecked():
+        if not checked:
+            return
+
+        sender = self.sender()
+        if sender == self.rb_mode_weekly:
+            self.date_time_stack.setVisible(True)
             self.current_mode = "weekly"
             self.date_time_stack.setCurrentWidget(self.day_selector)
             self.current_day = self.day_selector.currentText()
-        else: # '오늘' 버튼이 선택된 경우
+            self._set_schedule_controls_enabled(True)
+            self._load_day_schedules()
+        elif sender == self.rb_mode_today:
+            self.date_time_stack.setVisible(True)
             self.current_mode = "daily"
             self.date_time_stack.setCurrentWidget(self.lbl_today_date)
             self.current_day = self.today_date_str
-        self._load_day_schedules()
+            self._set_schedule_controls_enabled(True)
+            self._load_day_schedules()
+        elif sender == self.rb_mode_disabled:
+            if self.editing_row:
+                self._cancel_edit()
+            self.date_time_stack.setVisible(False)
+            self._set_schedule_controls_enabled(False)
+            while self.schedule_list_layout.count() > 1:
+                item = self.schedule_list_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+        
+        self.schedules['disabled'] = self.rb_mode_disabled.isChecked()
+        self.schedules['mode'] = self.current_mode
+        self.schedules_updated.emit(self.schedules)
 
     @property
     def _current_schedule_list(self):
@@ -189,6 +225,15 @@ class ScheduleWidget(QtWidgets.QFrame):
             return self.schedules["daily"][self.current_day]
 
     def _load_day_schedules(self):
+        # Do not load schedules if the mode is disabled
+        if self.rb_mode_disabled.isChecked():
+            while self.schedule_list_layout.count() > 1:
+                item = self.schedule_list_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+            return
+
         while self.schedule_list_layout.count() > 1:
             item = self.schedule_list_layout.takeAt(0)
             widget = item.widget()
@@ -214,9 +259,44 @@ class ScheduleWidget(QtWidgets.QFrame):
     @QtCore.pyqtSlot(dict)
     def load_schedules(self, schedules_data):
         self.schedules = schedules_data
-        # Initial day setting is now handled in _setup_controls via setCurrentIndex
-        # self.day_selector.setCurrentText(self.today_weekday_str)
-        self._load_day_schedules()
+        
+        is_disabled = self.schedules.get('disabled', False)
+        
+        # Block signals to prevent _on_mode_changed from firing recursively
+        self.rb_mode_disabled.blockSignals(True)
+        self.rb_mode_weekly.blockSignals(True)
+        self.rb_mode_today.blockSignals(True)
+        
+        self.rb_mode_disabled.setChecked(is_disabled)
+        
+        if is_disabled:
+            self.date_time_stack.setVisible(False)
+            self._set_schedule_controls_enabled(False)
+            self.rb_mode_weekly.setChecked(False)
+            self.rb_mode_today.setChecked(False)
+        else:
+            self.date_time_stack.setVisible(True)
+            self._set_schedule_controls_enabled(True)
+            mode = self.schedules.get('mode', 'weekly')
+            if mode == 'daily':
+                self.rb_mode_today.setChecked(True)
+                self.current_mode = "daily"
+                self.date_time_stack.setCurrentWidget(self.lbl_today_date)
+                self.current_day = self.today_date_str
+            else: # weekly
+                self.rb_mode_weekly.setChecked(True)
+                self.current_mode = "weekly"
+                self.date_time_stack.setCurrentWidget(self.day_selector)
+                self.current_day = self.schedules.get('current_day', self.today_weekday_str)
+                self.day_selector.setCurrentText(self.current_day)
+        
+        # Unblock signals
+        self.rb_mode_disabled.blockSignals(False)
+        self.rb_mode_weekly.blockSignals(False)
+        self.rb_mode_today.blockSignals(False)
+        
+        if not is_disabled:
+            self._load_day_schedules()
 
     def select_row(self, row_widget):
         if self.editing_row:
@@ -239,6 +319,7 @@ class ScheduleWidget(QtWidgets.QFrame):
             return
         if not day: return
         self.current_day = day
+        self.schedules['current_day'] = day
         self._load_day_schedules()
         
     def _add_row(self):
@@ -263,7 +344,7 @@ class ScheduleWidget(QtWidgets.QFrame):
         new_row.is_new = True
         new_row.enter_edit_mode()
 
-    def _handle_delete_cancel(self):
+    def _cancel_edit(self):
         if self.editing_row:
             if self.editing_row.is_new:
                 data_to_remove = self.editing_row.get_data()
@@ -272,6 +353,10 @@ class ScheduleWidget(QtWidgets.QFrame):
             self.editing_row = None
             self._load_day_schedules()
             self.schedules_updated.emit(self.schedules)
+
+    def _handle_delete_cancel(self):
+        if self.editing_row:
+            self._cancel_edit()
         else:
             if not self.selected_row:
                 msg_box = QtWidgets.QMessageBox(self)
@@ -343,3 +428,4 @@ class ScheduleWidget(QtWidgets.QFrame):
             self.btn_add.setText("✚ 추가")
             self.btn_add.clicked.connect(self._add_row)
             self.btn_add.setDisabled(False)
+

@@ -1,69 +1,23 @@
 # drivers/hardware.py
-import serial
-from serial.tools import list_ports
 import time
 import queue
-import gc
-from datetime import datetime
 from PyQt5 import QtCore
 
-# ============================================================
-# Helper Functions & Constants
-# ============================================================
-COMMAND_INTERVAL = 0.2 # 200ms between commands to prevent spamming
-
-def dec_to_bcd(n):
-    return (n // 10) * 16 + (n % 10)
+from core.protocol import PacketBuilder, PacketParser
+from core.constants import COMMAND_INTERVAL
+from drivers.serial_communicator import SerialCommunicator
 
 def _hex_list_from_bytes(data: bytes):
+    """바이트 문자열에서 16진수 문자열 리스트를 생성합니다."""
     hex_string = data.hex()
     return [hex_string[i:i+2] for i in range(0, len(hex_string), 2)]
 
-def _hex2dec(arr, first, last):
-    result = ""
-    for i in range(first, last + 1):
-        v = int(arr[i], 16) - 0x30
-        if not (0 <= v <= 9): return None
-        result += str(v)
-    return int(result) if result else None
-
-def _parse_sensor_packet(arr):
-    if len(arr) < 30: return None
-    arr = arr[-30:]
-    if arr[1] != "02": return None
-    
-    t_raw = _hex2dec(arr, 10, 12)
-    h_raw = _hex2dec(arr, 14, 16)
-    c_raw = _hex2dec(arr, 18, 21)
-    i_raw = _hex2dec(arr, 23, 26)
-
-    if None in (t_raw, h_raw, c_raw, i_raw): return None
-
-    return {
-        "temp": t_raw / 10.0,
-        "hum": h_raw / 10.0,
-        "co2": c_raw,
-        "illum": i_raw
-    }
-
-# Packet definitions
-SENSOR_REQUEST_PACKET = bytes.fromhex("0202FF53FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
-LED_PACKETS = {
-    "Off": bytes.fromhex("0201FF4CFF00FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"),
-    "Mood": bytes.fromhex("0201FF4CFF00FF02FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"),
-    "On": bytes.fromhex("0201FF4CFF00FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"),
-}
-PUMP_ON_PACKET = bytes.fromhex("0200FF59FF01FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
-PUMP_OFF_PACKET = bytes.fromhex("0200FF59FF01FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
-UV_ON_PACKET = bytes.fromhex("0200FF59FF02FF01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
-UV_OFF_PACKET = bytes.fromhex("0200FF59FF02FF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03")
-
-# ============================================================
-# Hardware Manager Class
-# ============================================================
-
 class HardwareManager(QtCore.QObject):
-    
+    """
+    하드웨어와의 통신을 오케스트레이션합니다.
+    별도의 스레드에서 실행되며, 타이머, 명령어 큐, 재연결 로직을 관리하고,
+    SerialCommunicator를 사용하여 실제 시리얼 I/O를 수행합니다.
+    """
     status_changed = QtCore.pyqtSignal(str)
     data_updated = QtCore.pyqtSignal(dict)
     raw_string_updated = QtCore.pyqtSignal(str)
@@ -71,26 +25,36 @@ class HardwareManager(QtCore.QObject):
 
     def __init__(self, port="COM5", baud_rate=38400):
         super().__init__()
-        self.serial_port_name = port
-        self.baud_rate = baud_rate
-        
-        self._ser = None
+        self._communicator = SerialCommunicator(port, baud_rate)
         self._command_queue = queue.Queue()
         self._running = False
         self._mutex = QtCore.QMutex()
-        self._is_connected = False
         self._last_write_timestamp = 0
 
         self.command_timer = None
         self.sensor_request_timer = None
         self.read_timer = None
         self.reconnect_timer = None
+        
+        self._command_map = {
+            'sensor_req': lambda args: PacketBuilder.sensor_request(),
+            'led': lambda args: PacketBuilder.led(args.get('mode')),
+            'pump': lambda args: PacketBuilder.pump(args.get('on')),
+            'uv': lambda args: PacketBuilder.uv(args.get('on')),
+            'bms_time_sync': lambda args: PacketBuilder.bms_time_sync(args.get('hour', 0), args.get('minute', 0), args.get('second', 0)),
+            'channel_led': lambda args: PacketBuilder.channel_led(args.get('settings', []))
+        }
 
     @QtCore.pyqtSlot()
     def start(self):
+        """하드웨어 관리자와 타이머를 시작합니다."""
         if self._running: return
         self._running = True
+        self._setup_timers()
+        self._connect()
         
+    def _setup_timers(self):
+        """하드웨어 관리자를 위한 타이머를 초기화하고 시작합니다."""
         self.command_timer = QtCore.QTimer()
         self.sensor_request_timer = QtCore.QTimer()
         self.read_timer = QtCore.QTimer()
@@ -105,11 +69,10 @@ class HardwareManager(QtCore.QObject):
         self.command_timer.start(50)
         self.sensor_request_timer.start(500)
 
-        self._connect()
-        
     @QtCore.pyqtSlot()
     def stop(self):
-        self.status_changed.emit("Stopping hardware thread...")
+        """하드웨어 관리자와 타이머를 중지합니다."""
+        self.status_changed.emit("하드웨어 스레드 중지 중...")
         self._running = False
         
         if self.command_timer: self.command_timer.stop()
@@ -117,12 +80,13 @@ class HardwareManager(QtCore.QObject):
         if self.reconnect_timer: self.reconnect_timer.stop()
         
         self._disconnect()
-        self.status_changed.emit("Hardware thread stopped.")
+        self.status_changed.emit("하드웨어 스레드 중지됨.")
 
     @QtCore.pyqtSlot()
     def reconnect(self):
-        self.status_changed.emit("Manual reconnect requested...")
-        print("[HARDWARE] Manual reconnect requested...")
+        """수동으로 재연결을 시도합니다."""
+        self.status_changed.emit("수동으로 재연결 요청...")
+        print("[HARDWARE] 수동으로 재연결 요청...")
         
         if self.reconnect_timer and self.reconnect_timer.isActive():
             self.reconnect_timer.stop()
@@ -131,68 +95,36 @@ class HardwareManager(QtCore.QObject):
         QtCore.QTimer.singleShot(100, self._connect)
 
     def _disconnect(self):
+        """시리얼 포트 연결을 해제합니다."""
         self._mutex.lock()
         try:
             if self.read_timer: self.read_timer.stop()
-            if self._ser:
-                if self._ser.is_open:
-                    self._ser.close()
-                del self._ser
-                self._ser = None
-                gc.collect()
-                if self._is_connected:
-                    msg = "Serial port disconnected."
-                    self.status_changed.emit(msg)
-                    print(f"[HARDWARE] {msg}")
-            self._is_connected = False
-        except Exception as e:
-            msg = f"[ERROR] on disconnect: {e}"
-            self.status_changed.emit(msg)
-            print(f"[HARDWARE] {msg}")
+            if self._communicator.is_open():
+                self._communicator.disconnect()
+                self.status_changed.emit("시리얼 포트 연결 해제됨.")
         finally:
             self._mutex.unlock()
 
     def _connect(self):
+        """시리얼 포트에 연결합니다."""
         self._mutex.lock()
         try:
-            if not self._running or self._is_connected:
+            if not self._running or self._communicator.is_open():
                 return
 
-            msg = f"Attempting to connect to {self.serial_port_name}..."
-            self.status_changed.emit(msg)
-            print(f"[HARDWARE] {msg}")
+            self.status_changed.emit(f"{self._communicator.port}에 연결 시도 중...")
+            success, message = self._communicator.connect()
+            self.status_changed.emit(message)
             
-            self._ser = serial.Serial(
-                port=self.serial_port_name,
-                baudrate=self.baud_rate,
-                timeout=0.1,
-                write_timeout=1.0
-            )
-            self._is_connected = True
-            
-            msg = f"Serial port {self.serial_port_name} connected."
-            self.status_changed.emit(msg)
-            print(f"[HARDWARE] {msg}")
-            
-            if self.read_timer: self.read_timer.start(50)
-
-        except serial.SerialException as e:
-            self._is_connected = False
-            available_ports = list_ports.comports()
-            port_list_str = ", ".join([p.device for p in available_ports])
-            if not port_list_str:
-                port_list_str = "No ports found"
-            
-            msg = f"[ERROR] Failed to connect: {e}. Available ports: [{port_list_str}]"
-            self.status_changed.emit(msg)
-            print(f"[HARDWARE] {msg}")
-            
-            if self._running and self.reconnect_timer:
+            if success:
+                if self.read_timer: self.read_timer.start(50)
+            elif self._running and self.reconnect_timer:
                 self.reconnect_timer.start(3000)
         finally:
             self._mutex.unlock()
 
     def _handle_serial_error(self, error_msg):
+        """시리얼 통신 오류를 처리합니다."""
         print(f"[HARDWARE] {error_msg}")
         self.status_changed.emit(error_msg)
         self._disconnect()
@@ -201,36 +133,34 @@ class HardwareManager(QtCore.QObject):
             self.reconnect_timer.start(1000)
 
     def _read_data(self):
-        if not self._is_connected: return
+        """시리얼 포트에서 데이터를 읽고 파싱합니다."""
+        if not self._communicator.is_open(): return
         
         self._mutex.lock()
         try:
-            if not self._ser or not self._ser.is_open: return
-
-            if self._ser.in_waiting > 0:
-                data = self._ser.read(self._ser.in_waiting)
-                if data:
-                    arr = _hex_list_from_bytes(data)
-                    raw_string = ",".join(arr)
-                    self.raw_string_updated.emit(raw_string)
-                    reading = _parse_sensor_packet(arr)
-                    if reading is not None:
-                        reading['timestamp'] = time.time()
-                        self.data_updated.emit(reading)
+            data = self._communicator.read()
+            if data:
+                arr = _hex_list_from_bytes(data)
+                self.raw_string_updated.emit(",".join(arr))
+                reading = PacketParser.parse_sensor_packet(arr)
+                if reading is not None:
+                    reading['timestamp'] = time.time()
+                    self.data_updated.emit(reading)
         except Exception as e:
-            self._handle_serial_error(f"[ERROR] Serial read error: {e}")
+            self._handle_serial_error(f"[오류] 시리얼 읽기 오류: {e}")
         finally:
             self._mutex.unlock()
 
     @QtCore.pyqtSlot(str, object)
     def submit_command(self, cmd: str, args=None):
+        """명령 큐에 명령을 제출합니다."""
         if not self._running: return
         if args is None: args = {}
         self._command_queue.put((cmd, args))
 
     def _process_command_queue(self):
-        now = time.time()
-        if now - self._last_write_timestamp < COMMAND_INTERVAL:
+        """명령 큐를 처리하고 하드웨어에 명령을 보냅니다."""
+        if time.time() - self._last_write_timestamp < COMMAND_INTERVAL:
             return
             
         if self._command_queue.empty():
@@ -241,51 +171,31 @@ class HardwareManager(QtCore.QObject):
         except queue.Empty:
             return
 
-        packet_to_send = None
-        if cmd == 'sensor_req':
-            packet_to_send = SENSOR_REQUEST_PACKET
-        elif cmd == 'led' and args:
-            packet_to_send = LED_PACKETS.get(args.get('mode'))
-        elif cmd == 'pump' and 'on' in args:
-            packet_to_send = PUMP_ON_PACKET if args.get('on') else PUMP_OFF_PACKET
-        elif cmd == 'uv' and 'on' in args:
-            packet_to_send = UV_ON_PACKET if args.get('on') else UV_OFF_PACKET
-        elif cmd == 'bms_time_sync' and args:
-            hour_bcd = dec_to_bcd(args.get('hour', 0))
-            minute_bcd = dec_to_bcd(args.get('minute', 0))
-            second_bcd = dec_to_bcd(args.get('second', 0))
-            packet_str = f"0202FF54FF00FF{hour_bcd:02x}{minute_bcd:02x}{second_bcd:02x}FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF03"
-            packet_to_send = bytes.fromhex(packet_str)
-        elif cmd == 'channel_led' and 'settings' in args:
-            settings = args.get('settings', [])
-            if len(settings) == 4:
-                payload = ""
-                for setting in settings:
-                    on = 0x01 if setting.get('on') else 0x00
-                    hz = setting.get('hz', 1)
-                    brightness = setting.get('brightness', 0)
-                    hz_hi = (hz >> 8) & 0xFF
-                    hz_lo = hz & 0xFF
-                    payload += f"{on:02x}{hz_hi:02x}{hz_lo:02x}{brightness:02x}"
-                padding_len = 30 - 7 - (len(payload)//2) - 1
-                packet_str = f"0201FF4DFF00FF{payload}{'FF'*padding_len}03"
-                if len(packet_str) == 60:
-                    packet_to_send = bytes.fromhex(packet_str)
-                else:
-                    self.status_changed.emit("[ERROR] Channel LED packet length is incorrect.")
+        builder = self._command_map.get(cmd)
+        if not builder:
+            self.status_changed.emit(f"[오류] 알 수 없는 명령: {cmd}")
+            return
+            
+        packet_to_send = builder(args)
+        if packet_to_send is None:
+            self.status_changed.emit(f"[오류] 명령에 대한 패킷을 만들 수 없습니다: {cmd}")
+            return
 
-        if packet_to_send:
-            self._mutex.lock()
-            try:
-                if not self._is_connected or not self._ser or not self._ser.is_open:
-                    # If disconnected between check and write, re-queue and let next cycle handle it.
-                    self.submit_command(cmd, args)
-                    return
-                self._ser.write(packet_to_send)
-                self._last_write_timestamp = time.time()
-                if cmd == 'sensor_req':
-                    self.request_sent.emit()
-            except Exception as e:
-                self._handle_serial_error(f"[ERROR] Serial write error: {e}")
-            finally:
-                self._mutex.unlock()
+        self._write_to_serial(packet_to_send, cmd, args)
+
+    def _write_to_serial(self, packet, cmd, args):
+        """시리얼 포트에 패킷을 씁니다."""
+        self._mutex.lock()
+        try:
+            if not self._communicator.is_open():
+                self.submit_command(cmd, args) # Re-queue if disconnected
+                return
+            self._communicator.write(packet)
+            print(f"[HARDWARE] 패킷 전송: {packet.hex().upper()}")
+            self._last_write_timestamp = time.time()
+            if cmd == 'sensor_req':
+                self.request_sent.emit()
+        except Exception as e:
+            self._handle_serial_error(f"[오류] 시리얼 쓰기 오류: {e}")
+        finally:
+            self._mutex.unlock()
