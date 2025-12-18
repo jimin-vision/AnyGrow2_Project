@@ -11,6 +11,8 @@ import javafx.stage.Stage;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.LocalTime;
@@ -19,6 +21,9 @@ public class Anygrow2FxApp extends Application {
 
     private final Anygrow2ClientLogic logic = new Anygrow2ClientLogic();
 
+    // 서버/클라이언트 인스턴스
+    private Anygrow2Server wsServer;
+    private AnygrowHttpServer httpServer;
     private WebSocketClient client;
     private String serverUri;
 
@@ -43,7 +48,8 @@ public class Anygrow2FxApp extends Application {
     @Override
     public void start(Stage stage) {
         var params = getParameters().getRaw();
-        serverUri = params.isEmpty() ? "ws://localhost:52273" : params.get(0);
+        // 설정 파일에서 포트 번호 읽어오기
+        serverUri = params.isEmpty() ? "ws://localhost:" + AppConfig.getWebSocketPort() : params.get(0);
 
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(10));
@@ -53,7 +59,7 @@ public class Anygrow2FxApp extends Application {
         // =========================
         HBox topBar = new HBox(10);
         topBar.setAlignment(Pos.CENTER_LEFT);
-        statusLabel = new Label("연결 안 됨");
+        statusLabel = new Label("서버 시작 중...");
         topBar.getChildren().addAll(new Label("상태:"), statusLabel);
         root.setTop(topBar);
 
@@ -67,17 +73,10 @@ public class Anygrow2FxApp extends Application {
         Label sensorTitle = new Label("센서 값");
         sensorTitle.setStyle("-fx-font-size: 16pt; -fx-font-weight: bold;");
 
-        tempLabel = new Label("온도: -- ℃");
-        tempLabel.setStyle("-fx-font-size: 14pt;");
-
-        humLabel = new Label("습도: -- %");
-        humLabel.setStyle("-fx-font-size: 14pt;");
-
-        co2Label = new Label("CO₂: ---- ppm");
-        co2Label.setStyle("-fx-font-size: 14pt;");
-
-        illLabel = new Label("조도: -- lx");
-        illLabel.setStyle("-fx-font-size: 14pt;");
+        tempLabel = createSensorLabel("온도: -- ℃");
+        humLabel = createSensorLabel("습도: -- %");
+        co2Label = createSensorLabel("CO₂: ---- ppm");
+        illLabel = createSensorLabel("조도: -- lx");
 
         leftBox.getChildren().addAll(sensorTitle, tempLabel, humLabel, co2Label, illLabel);
 
@@ -110,8 +109,8 @@ public class Anygrow2FxApp extends Application {
 
         alertsBox.getChildren().addAll(alertsTitle, alertsArea);
 
-        // 타이머 패널
-        TimerProfileStore store = new TimerProfileStore("anygrow2_timer_profiles.dat");
+        // 타이머 패널 (설정 파일 사용)
+        TimerProfileStore store = new TimerProfileStore(AppConfig.getTimerProfilesPath());
         timerPanel = new TimerPanel(store);
 
         // 타이머 + 경고 나란히
@@ -146,17 +145,62 @@ public class Anygrow2FxApp extends Application {
 
         stage.setOnCloseRequest(e -> {
             timerThreadRunning = false;
+
+            // Stop servers
+            if (wsServer != null) {
+                try {
+                    wsServer.stop();
+                    System.out.println("[SERVER] WebSocket server stopped.");
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    System.err.println("[SERVER] WebSocket server stop interrupted.");
+                }
+            }
+            if (httpServer != null) {
+                httpServer.stop();
+            }
+
+            // Stop client
             if (client != null) {
                 try {
                     client.close();
                 } catch (Exception ignored) {}
             }
+
             Platform.exit();
+            System.exit(0); // 모든 스레드가 확실히 종료되도록 강제 종료
         });
 
-        // WebSocket 연결 + 타이머 스레드 시작
+        // 서버 및 클라이언트 시작
+        startEmbeddedServer();
         connectWebSocket();
         startTimerThread();
+    }
+
+    private void startEmbeddedServer() {
+        try {
+            // 설정 파일에서 포트 및 시리얼 포트 이름 가져오기
+            String portName = AppConfig.getSerialPort();
+            int wsPort = AppConfig.getWebSocketPort();
+            int httpPort = AppConfig.getHttpPort();
+
+            // WebSocket 서버 시작
+            wsServer = new Anygrow2Server(new InetSocketAddress("0.0.0.0", wsPort), portName);
+            wsServer.start(); // Non-blocking
+
+            // HTTP 서버 시작
+            httpServer = new AnygrowHttpServer("0.0.0.0", httpPort);
+            httpServer.start();
+
+        } catch (Exception e) {
+            Platform.runLater(() -> {
+                statusLabel.setText("서버 시작 실패: " + e.getMessage());
+                Alert alert = new Alert(Alert.AlertType.ERROR, "내장 서버 시작 실패:\n" + e.getMessage() + "\n\nCOM 포트 설정을 확인하거나 서버를 별도로 실행해주세요.");
+                alert.setHeaderText("서버 시작 오류");
+                alert.showAndWait();
+            });
+            e.printStackTrace();
+        }
     }
 
     // =========================
@@ -274,6 +318,12 @@ public class Anygrow2FxApp extends Application {
 
         if (sb.length() == 0) sb.append("현재 경고가 없습니다.");
         alertsArea.setText(sb.toString());
+    }
+
+    private Label createSensorLabel(String initialText) {
+        Label label = new Label(initialText);
+        label.setStyle("-fx-font-size: 14pt;");
+        return label;
     }
 
     public static void main(String[] args) {

@@ -8,7 +8,9 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class AnygrowHttpServer {
 
@@ -30,6 +32,11 @@ public class AnygrowHttpServer {
         server.start();
         System.out.println("[HTTP] Web UI:  http://0.0.0.0:" + server.getAddress().getPort() + "/");
         System.out.println("[HTTP] API:     http://0.0.0.0:" + server.getAddress().getPort() + "/api/sensors?hours=24&limit=2000");
+    }
+
+    public void stop() {
+        server.stop(0);
+        System.out.println("[HTTP] Web UI server stopped.");
     }
 
     private void handleSensorsApi(HttpExchange ex) throws IOException {
@@ -76,22 +83,14 @@ public class AnygrowHttpServer {
     }
 
     private static String toJson(List<SensorDataRepository.SensorReading> list) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"count\":").append(list.size()).append(",\"data\":[");
-        for (int i = 0; i < list.size(); i++) {
-            var r = list.get(i);
-            if (i > 0) sb.append(',');
-            sb.append("{")
-              .append("\"tsMillis\":").append(r.tsMillis).append(',')
-              .append("\"tsText\":\"").append(escapeJson(r.tsText)).append("\",")
-              .append("\"temperature\":").append(r.temperature).append(',')
-              .append("\"humidity\":").append(r.humidity).append(',')
-              .append("\"co2\":").append(r.co2).append(',')
-              .append("\"illumination\":").append(r.illumination)
-              .append("}");
-        }
-        sb.append("]}");
-        return sb.toString();
+        String data = list.stream()
+                .map(r -> String.format(
+                        "{\"tsMillis\":%d,\"tsText\":\"%s\",\"temperature\":%.1f,\"humidity\":%.1f,\"co2\":%.0f,\"illumination\":%.0f}",
+                        r.tsMillis, escapeJson(r.tsText), r.temperature, r.humidity, r.co2, r.illumination
+                ))
+                .collect(Collectors.joining(","));
+
+        return String.format("{\"count\":%d,\"data\":[%s]}", list.size(), data);
     }
 
     private static String escapeJson(String s) {
@@ -100,17 +99,18 @@ public class AnygrowHttpServer {
 
     private static int parseQueryInt(String query, String key, int def) {
         if (query == null || query.isBlank()) return def;
-        String[] parts = query.split("&");
-        for (String p : parts) {
-            int eq = p.indexOf('=');
-            if (eq <= 0) continue;
-            String k = p.substring(0, eq);
-            String v = p.substring(eq + 1);
-            if (k.equals(key)) {
-                try { return Integer.parseInt(v); } catch (Exception ignored) { return def; }
-            }
-        }
-        return def;
+        return Arrays.stream(query.split("&"))
+                .map(p -> p.split("=", 2))
+                .filter(parts -> parts.length == 2 && parts[0].equals(key))
+                .findFirst()
+                .map(parts -> {
+                    try {
+                        return Integer.parseInt(parts[1]);
+                    } catch (NumberFormatException e) {
+                        return def;
+                    }
+                })
+                .orElse(def);
     }
 
     private static void sendText(HttpExchange ex, int code, String text) throws IOException {

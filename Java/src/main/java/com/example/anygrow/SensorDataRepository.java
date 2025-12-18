@@ -30,8 +30,10 @@ public class SensorDataRepository {
         try {
             // SQLite JDBC 드라이버 로딩
             Class.forName("org.sqlite.JDBC");
-            // 프로젝트 실행 폴더에 anygrow2_sensor.db 생성
-            connection = DriverManager.getConnection("jdbc:sqlite:anygrow2_sensor.db");
+            // 프로젝트 실행 폴더에 DB 파일 생성 (설정값 사용)
+            String dbPath = AppConfig.getDbFilePath();
+            connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+            System.out.println("[DB] Using database file: " + dbPath);
             initSchema();
         } catch (Exception e) {
             e.printStackTrace();
@@ -126,21 +128,21 @@ public class SensorDataRepository {
 
     /** 최근 24시간 데이터 조회 예시 메서드 */
     public synchronized List<SensorReading> findLast24Hours() {
-        long cutoff = System.currentTimeMillis() - 24L * 3600_000L;
-        String sql = "SELECT ts_millis, ts_text, temperature, humidity, co2, illumination" +
-                " FROM sensor_data WHERE ts_millis >= ? ORDER BY ts_millis ASC";
+        // findLastHours를 호출하여 중복 코드 제거 (limit는 적절한 기본값으로 설정)
+        return findLastHours(24, 2000);
+    }
+
+    public synchronized List<SensorReading> findLastHours(int hours, int limit) {
+        long cutoff = System.currentTimeMillis() - (long) hours * 3600_000L;
+        String sql = "SELECT ts_millis, ts_text, temperature, humidity, co2, illumination " +
+                "FROM sensor_data WHERE ts_millis >= ? ORDER BY ts_millis ASC LIMIT ?";
         List<SensorReading> result = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setLong(1, cutoff);
+            ps.setInt(2, limit);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    long tsMillis = rs.getLong("ts_millis");
-                    String tsText = rs.getString("ts_text");
-                    double temp = rs.getDouble("temperature");
-                    double hum = rs.getDouble("humidity");
-                    double co2 = rs.getDouble("co2");
-                    double illum = rs.getDouble("illumination");
-                    result.add(new SensorReading(tsMillis, tsText, temp, hum, co2, illum));
+                    result.add(mapRowToReading(rs));
                 }
             }
         } catch (SQLException e) {
@@ -149,30 +151,16 @@ public class SensorDataRepository {
         return result;
     }
 
-    public synchronized List<SensorReading> findLastHours(int hours, int limit) {
-    long cutoff = System.currentTimeMillis() - (long) hours * 3600_000L;
-    String sql = "SELECT ts_millis, ts_text, temperature, humidity, co2, illumination " +
-            "FROM sensor_data WHERE ts_millis >= ? ORDER BY ts_millis ASC LIMIT ?";
-    List<SensorReading> result = new ArrayList<>();
-    try (PreparedStatement ps = connection.prepareStatement(sql)) {
-        ps.setLong(1, cutoff);
-        ps.setInt(2, limit);
-        try (ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                result.add(new SensorReading(
-                        rs.getLong("ts_millis"),
-                        rs.getString("ts_text"),
-                        rs.getDouble("temperature"),
-                        rs.getDouble("humidity"),
-                        rs.getDouble("co2"),
-                        rs.getDouble("illumination")
-                ));
-            }
-        }
-    } catch (SQLException e) {
-        e.printStackTrace();
+    /** ResultSet의 현재 행을 SensorReading 객체로 변환하는 헬퍼 메서드 */
+    private SensorReading mapRowToReading(ResultSet rs) throws SQLException {
+        return new SensorReading(
+                rs.getLong("ts_millis"),
+                rs.getString("ts_text"),
+                rs.getDouble("temperature"),
+                rs.getDouble("humidity"),
+                rs.getDouble("co2"),
+                rs.getDouble("illumination")
+        );
     }
-    return result;
-}
     
 }

@@ -64,7 +64,7 @@ public class Anygrow2Client extends WebSocketClient {
 
     /** 간단 실행용 main */
     public static void main(String[] args) throws URISyntaxException, InterruptedException {
-        String serverUri = args.length > 0 ? args[0] : "ws://localhost:52273";
+        String serverUri = args.length > 0 ? args[0] : "ws://localhost:" + AppConfig.getWebSocketPort();
         Anygrow2Client client = new Anygrow2Client(new URI(serverUri));
         client.connectBlocking(); // 접속 대기
 
