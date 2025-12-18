@@ -12,8 +12,8 @@ class TimeAdjustmentWidget(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.btn_edit_time = QtWidgets.QPushButton("시간 수정")
-        self.btn_apply_time = QtWidgets.QPushButton("BMS 적용") # Changed text
+        self.btn_edit_time = QtWidgets.QPushButton("수동 적용")
+        self.btn_apply_time = QtWidgets.QPushButton("자동 적용") # Changed text
 
 
         layout.addWidget(self.btn_edit_time)
@@ -39,6 +39,7 @@ class TimeSettingDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("시간 설정")
+        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowContextHelpButtonHint)
         self.setFixedSize(250, 150)
         self._setup_ui()
         self._selected_time = None
@@ -70,6 +71,7 @@ class TimeSettingDialog(QtWidgets.QDialog):
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
+        button_box.button(QtWidgets.QDialogButtonBox.Ok).setText("적용")
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)

@@ -89,23 +89,19 @@ class MainController(QObject):
 
         jobs_to_run = []
         
-        # 1. 요일별 스케줄 확인
-        if self.schedules.get("weekly", {}).get(current_weekday):
-            for job in self.schedules["weekly"][current_weekday]:
-                # job['time'] is now a QTime object
+        # '오늘' 스케줄이 있는지 확인하고, 있으면 그것을 우선 사용
+        daily_jobs = self.schedules.get("daily", {}).get(current_date_str)
+        if daily_jobs:
+            for job in daily_jobs:
                 if job.get("time").toString("HH:mm") == current_time_str:
                     jobs_to_run.append(job)
-                    
-        # 2. 오늘 스케줄 확인 (요일별 스케줄보다 우선)
-        if self.schedules.get("daily", {}).get(current_date_str):
-            daily_jobs_to_run = []
-            for job in self.schedules["daily"][current_date_str]:
-                 if job.get("time").toString("HH:mm") == current_time_str:
-                    daily_jobs_to_run.append(job)
-            
-            if daily_jobs_to_run:
-                jobs_to_run = [j for j in jobs_to_run if j.get("time").toString("HH:mm") != current_time_str]
-                jobs_to_run.extend(daily_jobs_to_run)
+        # '오늘' 스케줄이 없으면, '요일별' 스케줄을 확인
+        else:
+            weekly_jobs = self.schedules.get("weekly", {}).get(current_weekday)
+            if weekly_jobs:
+                for job in weekly_jobs:
+                    if job.get("time").toString("HH:mm") == current_time_str:
+                        jobs_to_run.append(job)
         
         if jobs_to_run:
             print(f"Executing {len(jobs_to_run)} jobs for {current_time_str}")
@@ -121,7 +117,7 @@ class MainController(QObject):
         self.schedule_status_updated.emit(f"실행: {job.get('name', '이름없는 예약')}")
 
         if target == "전체 LED":
-            mode = "Auto" if is_on else "Off"
+            mode = "On" if is_on else "Off"
             self.send_command('led', {'mode': mode})
         elif target == "양액 펌프":
             self.send_command('pump', {'on': is_on})

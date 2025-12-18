@@ -52,6 +52,9 @@ class ScheduleWidget(QtWidgets.QFrame):
         
         self.day_selector = QtWidgets.QComboBox()
         self.day_selector.addItems(self.schedules["weekly"].keys())
+        # Set initial day to today's weekday
+        today_index = self.weekdays_map.index(self.today_weekday_str)
+        self.day_selector.setCurrentIndex(today_index)
         self.day_selector.setMaximumWidth(120)
         self.day_selector.currentTextChanged.connect(self._day_changed)
         
@@ -211,7 +214,8 @@ class ScheduleWidget(QtWidgets.QFrame):
     @QtCore.pyqtSlot(dict)
     def load_schedules(self, schedules_data):
         self.schedules = schedules_data
-        self.day_selector.setCurrentText(self.today_weekday_str)
+        # Initial day setting is now handled in _setup_controls via setCurrentIndex
+        # self.day_selector.setCurrentText(self.today_weekday_str)
         self._load_day_schedules()
 
     def select_row(self, row_widget):

@@ -1,5 +1,6 @@
 # app.py
 import sys
+from datetime import datetime
 from PyQt5 import QtWidgets, QtCore # QtCore 임포트 추가
 from ui.main_window import AnyGrowMainWindow
 from core.app_state import AppState
@@ -26,6 +27,14 @@ def main():
     win = AnyGrowMainWindow(app_state, main_controller, hardware_manager)
     win.show()
     
+    # 애플리케이션 시작 시 BMS 시간 자동 동기화 (2초 지연)
+    def initial_bms_sync():
+        print("[App Startup] Performing initial BMS time synchronization.")
+        now = datetime.now()
+        win.sync_bms_time(now)
+        
+    QtCore.QTimer.singleShot(2000, initial_bms_sync)
+
     # 애플리케이션 종료 시 스레드 정리
     app.aboutToQuit.connect(main_controller.stop_hardware) 
     

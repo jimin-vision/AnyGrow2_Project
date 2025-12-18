@@ -2,19 +2,55 @@
     "weekly": {
         "월요일": [],
         "화요일": [],
-        "수요일": [
+        "수요일": [],
+        "목요일": [
             {
                 "name": "새 예약 1",
-                "time": "12:00",
+                "time": "16:29",
+                "target": "전체 LED",
+                "action": "켜기 (ON)"
+            },
+            {
+                "name": "새 예약 2",
+                "time": "16:30",
                 "target": "전체 LED",
                 "action": "끄기 (OFF)"
             }
         ],
-        "목요일": [],
         "금요일": [],
         "토요일": [],
         "일요일": []
     },
-    "daily": {},
-    "templates": {}
+    "daily": {
+        "2025-12-18": [
+            {
+                "name": "새 예약 1",
+                "time": "16:29",
+                "target": "전체 LED",
+                "action": "켜기 (ON)"
+            },
+            {
+                "name": "새 예약 2",
+                "time": "16:30",
+                "target": "전체 LED",
+                "action": "끄기 (OFF)"
+            }
+        ]
+    },
+    "templates": {
+        "TEST": [
+            {
+                "name": "새 예약 1",
+                "time": "16:29",
+                "target": "전체 LED",
+                "action": "켜기 (ON)"
+            },
+            {
+                "name": "새 예약 2",
+                "time": "16:30",
+                "target": "전체 LED",
+                "action": "끄기 (OFF)"
+            }
+        ]
+    }
 }

@@ -10,13 +10,11 @@ class ControlWidget(QtWidgets.QWidget):
     channel_led_command = QtCore.pyqtSignal(list)
     pump_command = QtCore.pyqtSignal(bool)
     uv_command = QtCore.pyqtSignal(bool)
-    bms_time_sync_command = QtCore.pyqtSignal(dict)
+    bms_time_sync_command = QtCore.pyqtSignal(datetime)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        self.bms_time = QtCore.QTime.currentTime()
-
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(8)
 
@@ -30,6 +28,9 @@ class ControlWidget(QtWidgets.QWidget):
         layout.addWidget(self.gb_aux)
         layout.addWidget(self.gb_bms)
         layout.addStretch(1)
+
+        # The BMS display will be updated upon successful time sync
+
         
     def _setup_led_controls(self):
         self.gb_led = QtWidgets.QGroupBox("LED 제어 (전체)")
@@ -123,7 +124,7 @@ class ControlWidget(QtWidgets.QWidget):
         self.bms_analog_clock.setFixedSize(120, 120) # Increased size further
         self.bms_analog_clock.setStyle(2) # Style 2 as requested
 
-        self.lbl_bms_current_time = QtWidgets.QLabel("HH시 MM분")
+        self.lbl_bms_current_time = QtWidgets.QLabel("BMS 시간 미설정")
         font = self.lbl_bms_current_time.font()
         font.setPointSize(20) # Increased font size further
         font.setBold(True)
@@ -139,26 +140,15 @@ class ControlWidget(QtWidgets.QWidget):
         # Add spacing above the time adjustment widget
         bms_layout.addSpacing(20) # Increased spacing (e.g., 20 pixels)
         self.bms_time_adjustment_widget = TimeAdjustmentWidget()
-        # Connect the time_applied signal from TimeAdjustmentWidget to ControlWidget's bms_time_sync_command
-        self.bms_time_adjustment_widget.time_applied.connect(
-            lambda dt: self.bms_time_sync_command.emit({
-                'hour': dt.hour,
-                'minute': dt.minute,
-                'second': dt.second
-            })
-        )
+        self.bms_time_adjustment_widget.time_applied.connect(self.bms_time_sync_command.emit)
 
         bms_layout.addLayout(time_display_layout)
-        bms_layout.addSpacing(40) # Increased spacing further (e.g., 40 pixels)
+        bms_layout.addSpacing(40)
         bms_layout.addWidget(self.bms_time_adjustment_widget)
 
-        self.bms_clock_timer = QtCore.QTimer(self)
-        self.bms_clock_timer.setInterval(1000)
-        self.bms_clock_timer.timeout.connect(self._update_bms_clock_display)
-        self.bms_clock_timer.start()
-        
-    def _update_bms_clock_display(self):
-        now = datetime.now()
-        now_str = now.strftime("%H시 %M분")
+    @QtCore.pyqtSlot(datetime)
+    def update_bms_display(self, dt: datetime):
+        """Updates the BMS time display widgets with the given datetime."""
+        now_str = dt.strftime("%H시 %M분")
         self.lbl_bms_current_time.setText(now_str)
-        self.bms_analog_clock.setTime(QtCore.QTime(now.hour, now.minute, now.second))
+        self.bms_analog_clock.setTime(QtCore.QTime(dt.hour, dt.minute, dt.second))

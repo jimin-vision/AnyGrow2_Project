@@ -1,5 +1,6 @@
 # drivers/hardware.py
 import serial
+from serial.tools import list_ports
 import time
 import queue
 import gc
@@ -177,9 +178,15 @@ class HardwareManager(QtCore.QObject):
 
         except serial.SerialException as e:
             self._is_connected = False
-            msg = f"[ERROR] Failed to connect: {e}"
+            available_ports = list_ports.comports()
+            port_list_str = ", ".join([p.device for p in available_ports])
+            if not port_list_str:
+                port_list_str = "No ports found"
+            
+            msg = f"[ERROR] Failed to connect: {e}. Available ports: [{port_list_str}]"
             self.status_changed.emit(msg)
             print(f"[HARDWARE] {msg}")
+            
             if self._running and self.reconnect_timer:
                 self.reconnect_timer.start(3000)
         finally:

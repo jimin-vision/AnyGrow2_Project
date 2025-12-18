@@ -204,11 +204,15 @@ class AnyGrowMainWindow(QtWidgets.QMainWindow):
         self.set_serial_status(f"채널별 LED 설정 명령 예약: {settings}")
         self._main_controller.send_command('channel_led', {'settings': settings})
 
-    @QtCore.pyqtSlot(dict)
-    def sync_bms_time(self, time_data: dict):
+    @QtCore.pyqtSlot(datetime)
+    def sync_bms_time(self, dt: datetime):
+        time_data = {'hour': dt.hour, 'minute': dt.minute, 'second': dt.second}
         print(f"[UI 동작] BMS 시간 동기화 전송.")
         self.set_serial_status(f"BMS 시간 동기화 명령 예약: {time_data['hour']:02d}:{time_data['minute']:02d}:{time_data['second']:02d}")
         self._main_controller.send_command('bms_time_sync', time_data)
+        
+        # Update the BMS clock display in the control widget
+        self.control_widget.update_bms_display(dt)
 
     def apply_all_schedules(self):
         """
