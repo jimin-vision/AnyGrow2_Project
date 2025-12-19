@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
+}
+
+group = 'com.example.anygrow'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    // JDK 17 기준 (이미 17 쓰고 있다면 그대로)
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+// UTF-8 인코딩 설정
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+// JavaFX 설정 (플러그인이 알아서 JavaFX 라이브러리 가져옴)
+javafx {
+    // LTS 버전 중 하나. 17 써도 되고, 21 써도 됨.
+    version = '21'
+    modules = [ 'javafx.controls' ]   // controls 안에 base/graphics까지 전부 포함됨
+}
+
+dependencies {
+    // WebSocket 서버/클라이언트용
+    implementation 'org.java-websocket:Java-WebSocket:1.5.6'
+
+    // 시리얼 통신 (COM 포트)
+    implementation 'com.fazecast:jSerialComm:2.11.4'
+
+    // 로깅 (SLF4J + simple 바인딩)
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    runtimeOnly  'org.slf4j:slf4j-simple:2.0.17'
+
+    implementation 'org.xerial:sqlite-jdbc:3.36.0.3'
+}
+
+application {
+    // gradle run 으로 실행할 JavaFX 메인 클래스
+    mainClass = 'com.example.anygrow.Anygrow2FxApp'
+    applicationDefaultJvmArgs = ['-Dfile.encoding=UTF-8']
+}
+
+// 예전처럼 서버만 따로 돌리고 싶을 때 사용할 실행 타스크 (선택 사항)
+tasks.register('runServer', JavaExec) {
+    group = 'application'
+    description = 'Run serial + WebSocket server (console version)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.anygrow.Anygrow2Server'
+    jvmArgs = ['-Dfile.encoding=UTF-8']
+
+    // 예: gradle runServer -Pport=COM5
+    if (project.hasProperty('port')) {
+        args project.property('port')
+    }
+}

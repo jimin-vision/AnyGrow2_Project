@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Anygrow2 센서 원격 조회</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9;
+      --card:#ffffff;
+      --border:#d7dbe0;
+      --text:#111;
+      --sub:#666;
+      --radius:14px;
+      --pad:14px;
+      --gap:12px;
+      --btnH:44px;
+      --shadow: 0 6px 18px rgba(0,0,0,.06);
+    }
+    *{ box-sizing: border-box; }
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans KR, Arial, sans-serif;
+      line-height:1.35;
+    }
+    .wrap{
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 14px 12px calc(24px + env(safe-area-inset-bottom));
+    }
+    header{
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap:10px;
+      padding: 8px 2px 12px;
+    }
+    h1{
+      margin:0;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.2px;
+    }
+    .status{
+      font-size: 12px;
+      color: var(--sub);
+      text-align:right;
+    }
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .controls{ padding: var(--pad); }
+    .row{
+      display:flex;
+      flex-wrap:wrap;
+      gap: 10px;
+      align-items:center;
+    }
+    label{
+      font-size: 13px;
+      color: var(--sub);
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      min-width: 140px;
+      flex: 1 1 150px;
+    }
+    input{
+      height: var(--btnH);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 0 12px;
+      font-size: 15px;
+      background:#fff;
+      width: 100%;
+    }
+    button{
+      height: var(--btnH);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background:#fff;
+      padding: 0 14px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor:pointer;
+      flex: 1 1 140px;
+    }
+    button.primary{
+      border-color:#b9d2ff;
+      background:#eaf2ff;
+    }
+    button:active{ transform: translateY(1px); }
+    .hint{
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--sub);
+      word-break: break-all;
+    }
+    code{
+      background:#f1f3f6;
+      padding: 2px 6px;
+      border-radius: 8px;
+      border:1px solid #e6e9ee;
+    }
+    .grid{
+      margin-top: var(--gap);
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: var(--gap);
+    }
+    @media (min-width: 720px){
+      .grid{ grid-template-columns: 1fr 1fr; }
+      h1{ font-size: 20px; }
+    }
+    .chartCard{ padding: 12px 12px 10px; }
+    .chartTitle{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin: 2px 2px 10px;
+    }
+    .chartTitle .t{
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: -0.1px;
+    }
+    .chartTitle .v{
+      font-size: 13px;
+      color: var(--sub);
+      font-weight: 700;
+      text-align:right;
+      min-width: 70px;
+    }
+    canvas{
+      width: 100% !important;
+      height: 240px !important;
+    }
+    @media (min-width: 720px){
+      canvas{ height: 260px !important; }
+    }
+    .bottomBar{
+      position: sticky;
+      bottom: calc(10px + env(safe-area-inset-bottom));
+      margin-top: 14px;
+      padding: 10px;
+      display:flex;
+      gap:10px;
+      background: rgba(246,247,249,.86);
+      backdrop-filter: blur(8px);
+      border-radius: 16px;
+    }
+    .bottomBar button{ flex:1; }
+  </style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Anygrow2 센서 원격 조회</h1>
+      <div class="status" id="status">상태: 대기</div>
+    </div>
+    <div class="status" id="last">마지막 갱신: -</div>
+  </header>
+
+  <section class="card controls">
+    <div class="row">
+      <label>
+        조회 시간(시간)
+        <input id="hours" type="number" min="1" max="168" value="24" inputmode="numeric" />
+      </label>
+
+      <label>
+        최대 개수
+        <input id="limit" type="number" min="1" max="20000" value="2000" inputmode="numeric" />
+      </label>
+
+      <label>
+        자동 새로고침(초)
+        <input id="interval" type="number" min="2" max="60" value="5" inputmode="numeric" />
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button class="primary" onclick="reload()">불러오기</button>
+      <button onclick="toggleAuto()"><span id="autoTxt">자동 새로고침: OFF</span></button>
+      <button onclick="fitX()">X축 압축/확대</button>
+    </div>
+
+    <div class="hint">
+      API: <code>/api/sensors?hours=24&limit=2000</code>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card chartCard">
+      <div class="chartTitle">
+        <div class="t">온도(℃)</div>
+        <div class="v" id="vTemp">-</div>
+      </div>
+      <canvas id="cTemp"></canvas>
+    </div>
+
+    <div class="card chartCard">
+      <div class="chartTitle">
+        <div class="t">습도(%)</div>
+        <div class="v" id="vHum">-</div>
+      </div>
+      <canvas id="cHum"></canvas>
+    </div>
+
+    <div class="card chartCard">
+      <div class="chartTitle">
+        <div class="t">CO₂(ppm)</div>
+        <div class="v" id="vCo2">-</div>
+      </div>
+      <canvas id="cCo2"></canvas>
+    </div>
+
+    <div class="card chartCard">
+      <div class="chartTitle">
+        <div class="t">조도(lx)</div>
+        <div class="v" id="vIll">-</div>
+      </div>
+      <canvas id="cIll"></canvas>
+    </div>
+  </section>
+
+  <div class="bottomBar">
+    <button class="primary" onclick="reload()">새로고침</button>
+    <button onclick="toggleAuto()"><span id="autoTxt2">자동: OFF</span></button>
+  </div>
+
+</div>
+
+<script>
+let charts = {};
+let auto = false;
+let timer = null;
+let compactX = true;
+
+function nowText(){
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** tsMillis(epoch ms) -> "HH:MM:SS" (브라우저 로컬시간 기준) */
+function toLocalTimeLabel(tsMillis){
+  const d = new Date(Number(tsMillis));
+  // 일부 브라우저에서 초 포함 형식이 달라질 수 있어 옵션으로 고정
+  return d.toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function makeChart(canvasId, label) {
+  const ctx = document.getElementById(canvasId);
+  return new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label,
+        data: [],
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.15
+      }]
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          display: true,
+          ticks: { maxTicksLimit: 8 }
+        }
+      }
+    }
+  });
+}
+
+charts.temp = makeChart('cTemp', '온도');
+charts.hum  = makeChart('cHum', '습도');
+charts.co2  = makeChart('cCo2', 'CO2');
+charts.ill  = makeChart('cIll', '조도');
+
+function setStat(msg){
+  document.getElementById('status').textContent = `상태: ${msg}`;
+}
+function setLast(){
+  document.getElementById('last').textContent = `마지막 갱신: ${nowText()}`;
+}
+function setValue(id, v, unit=''){
+  document.getElementById(id).textContent = (v == null ? '-' : `${v}${unit}`);
+}
+function lastOrNull(arr){
+  return arr && arr.length ? arr[arr.length - 1] : null;
+}
+
+async function reload() {
+  const hours = Number(document.getElementById('hours').value || 24);
+  const limit = Number(document.getElementById('limit').value || 2000);
+
+  setStat('불러오는 중...');
+
+  try {
+    const res = await fetch(`/api/sensors?hours=${hours}&limit=${limit}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const json = await res.json();
+
+    // ✅ X축 라벨을 tsText가 아니라 tsMillis로 생성 (폰 로컬시간 기준)
+    const labels = json.data.map(r => toLocalTimeLabel(r.tsMillis));
+
+    const t = json.data.map(r => r.temperature);
+    const h = json.data.map(r => r.humidity);
+    const c = json.data.map(r => r.co2);
+    const l = json.data.map(r => r.illumination);
+
+    setData(charts.temp, labels, t);
+    setData(charts.hum,  labels, h);
+    setData(charts.co2,  labels, c);
+    setData(charts.ill,  labels, l);
+
+    setValue('vTemp', lastOrNull(t)?.toFixed?.(1) ?? lastOrNull(t), '℃');
+    setValue('vHum',  lastOrNull(h)?.toFixed?.(1) ?? lastOrNull(h), '%');
+    setValue('vCo2',  lastOrNull(c), '');
+    setValue('vIll',  lastOrNull(l), '');
+
+    setStat(`완료 (count=${json.count})`);
+    setLast();
+  } catch (e) {
+    setStat(`실패 (${e})`);
+  }
+}
+
+function setData(chart, labels, data) {
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = data;
+  chart.options.scales.x.ticks.maxTicksLimit = compactX ? 6 : 12;
+  chart.update();
+}
+
+function toggleAuto() {
+  auto = !auto;
+  const onoff = auto ? 'ON' : 'OFF';
+  document.getElementById('autoTxt').textContent = `자동 새로고침: ${onoff}`;
+  document.getElementById('autoTxt2').textContent = `자동: ${onoff}`;
+
+  if (timer) clearInterval(timer);
+  timer = null;
+
+  if (auto) {
+    const sec = Math.max(2, Math.min(60, Number(document.getElementById('interval').value || 5)));
+    timer = setInterval(reload, sec * 1000);
+  }
+}
+
+function fitX(){
+  compactX = !compactX;
+  reload();
+}
+
+reload();
+</script>
+</body>
+</html>
